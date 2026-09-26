@@ -47,18 +47,130 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
     }
 
     const db = getDatabase();
-    const cleanUsername = username.trim();
+    const cleanUsername = String(username).trim();
+    const cleanPassword = String(password).trim();
 
-    const user = await db
-      .prepare('SELECT * FROM users WHERE username = ?')
+    // 1. Try finding direct user by username (case-insensitive)
+    let user = await db
+      .prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)')
       .bind(cleanUsername)
       .first<any>();
+
+    // 2. If user not directly found in users table, check drive_credentials table
+    if (!user) {
+      // Check coordinator credentials
+      const coordCred = await db
+        .prepare('SELECT * FROM drive_credentials WHERE LOWER(coordinator_username) = LOWER(?)')
+        .bind(cleanUsername)
+        .first<any>();
+
+      if (coordCred) {
+        const drive = await db
+          .prepare('SELECT * FROM drives WHERE id = ?')
+          .bind(coordCred.drive_id)
+          .first<any>();
+
+        const compName = drive?.company_name || 'Campus Drive';
+        const salt = coordCred.coordinator_salt || generateSalt();
+        const hash = coordCred.coordinator_password_hash || (await hashPassword(coordCred.plain_coordinator_password, salt));
+
+        user = {
+          id: `usr_${coordCred.coordinator_username}`,
+          username: coordCred.coordinator_username,
+          password_hash: hash,
+          salt: salt,
+          role: 'COORDINATOR',
+          drive_id: coordCred.drive_id,
+          company_name: compName,
+          full_name: `Student Coordinator (${compName})`,
+          plain_pass: coordCred.plain_coordinator_password,
+        };
+
+        // Self-heal/insert into users table
+        await db
+          .prepare(
+            `INSERT OR REPLACE INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+          )
+          .bind(user.id, user.username, user.password_hash, user.salt, user.role, user.drive_id, user.company_name, user.full_name)
+          .run();
+      } else {
+        // Check HR credentials
+        const hrCred = await db
+          .prepare('SELECT * FROM drive_credentials WHERE LOWER(hr_username) = LOWER(?)')
+          .bind(cleanUsername)
+          .first<any>();
+
+        if (hrCred) {
+          const drive = await db
+            .prepare('SELECT * FROM drives WHERE id = ?')
+            .bind(hrCred.drive_id)
+            .first<any>();
+
+          const compName = drive?.company_name || 'Campus Drive';
+          const salt = hrCred.hr_salt || generateSalt();
+          const hash = hrCred.hr_password_hash || (await hashPassword(hrCred.plain_hr_password, salt));
+
+          user = {
+            id: `usr_${hrCred.hr_username}`,
+            username: hrCred.hr_username,
+            password_hash: hash,
+            salt: salt,
+            role: 'HR',
+            drive_id: hrCred.drive_id,
+            company_name: compName,
+            full_name: `Talent Acquisition Partner (${compName})`,
+            plain_pass: hrCred.plain_hr_password,
+          };
+
+          // Self-heal/insert into users table
+          await db
+            .prepare(
+              `INSERT OR REPLACE INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+            )
+            .bind(user.id, user.username, user.password_hash, user.salt, user.role, user.drive_id, user.company_name, user.full_name)
+            .run();
+        }
+      }
+    }
 
     if (!user) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
 
-    const isValid = await verifyPassword(password, user.salt, user.password_hash);
+    // Verify Password: first try cryptographic hash verification, fallback to plain check if seeded
+    let isValid = false;
+    if (user.salt && user.password_hash) {
+      isValid = await verifyPassword(cleanPassword, user.salt, user.password_hash);
+    }
+    if (!isValid && user.plain_pass && cleanPassword === user.plain_pass) {
+      isValid = true;
+    }
+
+    // Also check drive_credentials table plain password as backup verification
+    if (!isValid && (user.role === 'COORDINATOR' || user.role === 'HR')) {
+      const cred = await db
+        .prepare('SELECT * FROM drive_credentials WHERE drive_id = ?')
+        .bind(user.drive_id)
+        .first<any>();
+
+      if (cred) {
+        if (user.role === 'COORDINATOR' && cred.plain_coordinator_password === cleanPassword) {
+          isValid = true;
+          // Re-hash and update user password hash for future logins
+          const newSalt = generateSalt();
+          const newHash = await hashPassword(cleanPassword, newSalt);
+          await db.prepare('UPDATE users SET password_hash = ?, salt = ? WHERE id = ?').bind(newHash, newSalt, user.id).run();
+        } else if (user.role === 'HR' && cred.plain_hr_password === cleanPassword) {
+          isValid = true;
+          const newSalt = generateSalt();
+          const newHash = await hashPassword(cleanPassword, newSalt);
+          await db.prepare('UPDATE users SET password_hash = ?, salt = ? WHERE id = ?').bind(newHash, newSalt, user.id).run();
+        }
+      }
+    }
+
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
@@ -112,7 +224,14 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
       placementsRes,
     ] = await Promise.all([
       db.prepare('SELECT * FROM students ORDER BY roll_number ASC LIMIT 3000').all<any>(),
-      db.prepare('SELECT * FROM drives ORDER BY drive_date DESC').all<any>(),
+      db.prepare(`
+        SELECT d.*, 
+               c.coordinator_username, c.plain_coordinator_password, 
+               c.hr_username, c.plain_hr_password 
+        FROM drives d 
+        LEFT JOIN drive_credentials c ON d.id = c.drive_id 
+        ORDER BY d.drive_date DESC
+      `).all<any>(),
       db.prepare('SELECT * FROM rounds ORDER BY round_number ASC').all<any>(),
       db.prepare('SELECT * FROM applications ORDER BY applied_at DESC').all<any>(),
       db.prepare('SELECT * FROM round_candidates').all<any>(),
@@ -151,6 +270,11 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
         } catch {
           branches = ['CSE', 'IT', 'ECE'];
         }
+        const coordUser = d.coordinator_username || `coord_${companySlug}`;
+        const coordPass = d.plain_coordinator_password || `coord2026@${companySlug}`;
+        const hrUser = d.hr_username || `hr_${companySlug}`;
+        const hrPass = d.plain_hr_password || `hr2026@${companySlug}`;
+
         return {
           id: d.id,
           companyName: d.company_name,
@@ -170,10 +294,10 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
           createdAt: d.created_at,
           updatedAt: d.updated_at,
           credentials: {
-            coordinatorUsername: `coord_${companySlug}`,
-            coordinatorPassword: `coord2026@${companySlug}`,
-            hrUsername: `hr_${companySlug}`,
-            hrPassword: `hr2026@${companySlug}`,
+            coordinatorUsername: coordUser,
+            coordinatorPassword: coordPass,
+            hrUsername: hrUser,
+            hrPassword: hrPass,
           },
         };
       }),
@@ -518,7 +642,14 @@ apiRouter.get('/drives', async (req: Request, res: Response) => {
   try {
     const db = getDatabase();
     const { results } = await db
-      .prepare('SELECT * FROM drives ORDER BY drive_date DESC')
+      .prepare(`
+        SELECT d.*, 
+               c.coordinator_username, c.plain_coordinator_password, 
+               c.hr_username, c.plain_hr_password 
+        FROM drives d 
+        LEFT JOIN drive_credentials c ON d.id = c.drive_id 
+        ORDER BY d.drive_date DESC
+      `)
       .all<any>();
 
     const mapped = results.map((d) => {
@@ -530,6 +661,11 @@ apiRouter.get('/drives', async (req: Request, res: Response) => {
       }
 
       const companySlug = (d.company_name || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const coordUser = d.coordinator_username || `coord_${companySlug}`;
+      const coordPass = d.plain_coordinator_password || `coord2026@${companySlug}`;
+      const hrUser = d.hr_username || `hr_${companySlug}`;
+      const hrPass = d.plain_hr_password || `hr2026@${companySlug}`;
+
       return {
         id: d.id,
         companyName: d.company_name,
@@ -549,10 +685,10 @@ apiRouter.get('/drives', async (req: Request, res: Response) => {
         createdAt: d.created_at,
         updatedAt: d.updated_at,
         credentials: {
-          coordinatorUsername: `coord_${companySlug}`,
-          coordinatorPassword: `coord2026@${companySlug}`,
-          hrUsername: `hr_${companySlug}`,
-          hrPassword: `hr2026@${companySlug}`,
+          coordinatorUsername: coordUser,
+          coordinatorPassword: coordPass,
+          hrUsername: hrUser,
+          hrPassword: hrPass,
         },
       };
     });
@@ -568,7 +704,14 @@ apiRouter.get('/drives/:id', async (req: Request, res: Response) => {
   try {
     const db = getDatabase();
     const d = await db
-      .prepare('SELECT * FROM drives WHERE id = ?')
+      .prepare(`
+        SELECT d.*, 
+               c.coordinator_username, c.plain_coordinator_password, 
+               c.hr_username, c.plain_hr_password 
+        FROM drives d 
+        LEFT JOIN drive_credentials c ON d.id = c.drive_id 
+        WHERE d.id = ?
+      `)
       .bind(req.params.id)
       .first<any>();
 
@@ -580,6 +723,12 @@ apiRouter.get('/drives/:id', async (req: Request, res: Response) => {
     } catch {
       branches = ['CSE', 'IT', 'ECE'];
     }
+
+    const companySlug = (d.company_name || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const coordUser = d.coordinator_username || `coord_${companySlug}`;
+    const coordPass = d.plain_coordinator_password || `coord2026@${companySlug}`;
+    const hrUser = d.hr_username || `hr_${companySlug}`;
+    const hrPass = d.plain_hr_password || `hr2026@${companySlug}`;
 
     res.json({
       id: d.id,
@@ -599,6 +748,12 @@ apiRouter.get('/drives/:id', async (req: Request, res: Response) => {
       retentionExpiresAt: d.retention_expires_at,
       createdAt: d.created_at,
       updatedAt: d.updated_at,
+      credentials: {
+        coordinatorUsername: coordUser,
+        coordinatorPassword: coordPass,
+        hrUsername: hrUser,
+        hrPassword: hrPass,
+      },
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -615,7 +770,14 @@ apiRouter.get('/drives/:id/credentials', authMiddleware, roleMiddleware(['TPO'])
       .first<any>();
 
     if (!cred) {
-      return res.status(404).json({ error: 'Credentials not found' });
+      const drive = await db.prepare('SELECT * FROM drives WHERE id = ?').bind(req.params.id).first<any>();
+      const companySlug = (drive?.company_name || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
+      return res.json({
+        coordinatorUsername: `coord_${companySlug}`,
+        coordinatorPassword: `coord2026@${companySlug}`,
+        hrUsername: `hr_${companySlug}`,
+        hrPassword: `hr2026@${companySlug}`,
+      });
     }
 
     res.json({
@@ -642,7 +804,7 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
     retentionDate.setMonth(retentionDate.getMonth() + 6);
     const retentionExpiresAt = retentionDate.toISOString().split('T')[0];
 
-    const driveId = `drv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const driveId = d.id || `drv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const companySlug = (d.companyName || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
 
     await db
@@ -671,10 +833,10 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
       .run();
 
     // Recruiter accounts
-    const coordUser = `coord_${companySlug}`;
-    const coordPass = `coord2026@${companySlug}`;
-    const hrUser = `hr_${companySlug}`;
-    const hrPass = `hr2026@${companySlug}`;
+    const coordUser = d.credentials?.coordinatorUsername || `coord_${companySlug}`;
+    const coordPass = d.credentials?.coordinatorPassword || `coord2026@${companySlug}`;
+    const hrUser = d.credentials?.hrUsername || `hr_${companySlug}`;
+    const hrPass = d.credentials?.hrPassword || `hr2026@${companySlug}`;
 
     const coordSalt = generateSalt();
     const coordHash = await hashPassword(coordPass, coordSalt);
@@ -701,7 +863,7 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
       )
       .run();
 
-    // Insert user logins
+    // Insert user logins into users table
     await db
       .prepare(
         `INSERT OR REPLACE INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)

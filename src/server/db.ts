@@ -338,6 +338,26 @@ export async function initializeDatabase(db: IronDatabase): Promise<void> {
         )
         .run();
 
+      const compSlug = (d.companyName || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (`coord_${compSlug}` !== d.coordUser) {
+        await db
+          .prepare(
+            `INSERT OR REPLACE INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+          )
+          .bind(
+            `usr_coord_${compSlug}`,
+            `coord_${compSlug}`,
+            coordHash,
+            coordSalt,
+            'COORDINATOR',
+            d.id,
+            d.companyName,
+            `Student Coordinator (${d.companyName})`
+          )
+          .run();
+      }
+
       // HR User Account
       await db
         .prepare(
@@ -355,6 +375,25 @@ export async function initializeDatabase(db: IronDatabase): Promise<void> {
           `Talent Acquisition Partner (${d.companyName})`
         )
         .run();
+
+      if (`hr_${compSlug}` !== d.hrUser) {
+        await db
+          .prepare(
+            `INSERT OR REPLACE INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+          )
+          .bind(
+            `usr_hr_${compSlug}`,
+            `hr_${compSlug}`,
+            hrHash,
+            hrSalt,
+            'HR',
+            d.id,
+            d.companyName,
+            `Talent Acquisition Partner (${d.companyName})`
+          )
+          .run();
+      }
 
       // Rounds
       await db

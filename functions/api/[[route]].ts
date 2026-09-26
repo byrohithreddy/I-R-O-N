@@ -121,7 +121,14 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         placementsRes,
       ] = await Promise.all([
         env.DB.prepare('SELECT * FROM students ORDER BY roll_number ASC LIMIT 3000').all(),
-        env.DB.prepare('SELECT * FROM drives ORDER BY drive_date DESC').all(),
+        env.DB.prepare(`
+          SELECT d.*, 
+                 c.coordinator_username, c.plain_coordinator_password, 
+                 c.hr_username, c.plain_hr_password 
+          FROM drives d 
+          LEFT JOIN drive_credentials c ON d.id = c.drive_id 
+          ORDER BY d.drive_date DESC
+        `).all(),
         env.DB.prepare('SELECT * FROM rounds ORDER BY round_number ASC').all(),
         env.DB.prepare('SELECT * FROM applications ORDER BY applied_at DESC').all(),
         env.DB.prepare('SELECT * FROM round_candidates').all(),
@@ -154,6 +161,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         })),
         drives: (drivesRes.results || []).map((d: any) => {
           const companySlug = (d.company_name || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const coordUser = d.coordinator_username || `coord_${companySlug}`;
+          const coordPass = d.plain_coordinator_password || `coord2026@${companySlug}`;
+          const hrUser = d.hr_username || `hr_${companySlug}`;
+          const hrPass = d.plain_hr_password || `hr2026@${companySlug}`;
+
           return {
             id: d.id,
             companyName: d.company_name,
@@ -173,10 +185,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
             createdAt: d.created_at,
             updatedAt: d.updated_at,
             credentials: {
-              coordinatorUsername: `coord_${companySlug}`,
-              coordinatorPassword: `coord2026@${companySlug}`,
-              hrUsername: `hr_${companySlug}`,
-              hrPassword: `hr2026@${companySlug}`,
+              coordinatorUsername: coordUser,
+              coordinatorPassword: coordPass,
+              hrUsername: hrUser,
+              hrPassword: hrPass,
             },
           };
         }),
@@ -277,16 +289,88 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     if (path === '/api/auth/login' && method === 'POST') {
       const body = (await request.json()) as any;
       const { username, password } = body;
-      const user = await env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(username.trim()).first<any>();
+      const cleanUsername = String(username || '').trim();
+      const cleanPassword = String(password || '').trim();
+
+      let user = await env.DB.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').bind(cleanUsername).first<any>();
+
+      if (!user) {
+        // Check coordinator credentials
+        const coordCred = await env.DB.prepare('SELECT * FROM drive_credentials WHERE LOWER(coordinator_username) = LOWER(?)').bind(cleanUsername).first<any>();
+        if (coordCred) {
+          const drive = await env.DB.prepare('SELECT * FROM drives WHERE id = ?').bind(coordCred.drive_id).first<any>();
+          const compName = drive?.company_name || 'Campus Drive';
+          const salt = coordCred.coordinator_salt || generateSalt();
+          const hash = coordCred.coordinator_password_hash || (await hashPassword(coordCred.plain_coordinator_password, salt));
+          user = {
+            id: `usr_${coordCred.coordinator_username}`,
+            username: coordCred.coordinator_username,
+            password_hash: hash,
+            salt: salt,
+            role: 'COORDINATOR',
+            drive_id: coordCred.drive_id,
+            company_name: compName,
+            full_name: `Student Coordinator (${compName})`,
+            plain_pass: coordCred.plain_coordinator_password,
+          };
+          await env.DB.prepare(
+            `INSERT OR REPLACE INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+          ).bind(user.id, user.username, user.password_hash, user.salt, user.role, user.drive_id, user.company_name, user.full_name).run();
+        } else {
+          // Check HR credentials
+          const hrCred = await env.DB.prepare('SELECT * FROM drive_credentials WHERE LOWER(hr_username) = LOWER(?)').bind(cleanUsername).first<any>();
+          if (hrCred) {
+            const drive = await env.DB.prepare('SELECT * FROM drives WHERE id = ?').bind(hrCred.drive_id).first<any>();
+            const compName = drive?.company_name || 'Campus Drive';
+            const salt = hrCred.hr_salt || generateSalt();
+            const hash = hrCred.hr_password_hash || (await hashPassword(hrCred.plain_hr_password, salt));
+            user = {
+              id: `usr_${hrCred.hr_username}`,
+              username: hrCred.hr_username,
+              password_hash: hash,
+              salt: salt,
+              role: 'HR',
+              drive_id: hrCred.drive_id,
+              company_name: compName,
+              full_name: `Talent Acquisition Partner (${compName})`,
+              plain_pass: hrCred.plain_hr_password,
+            };
+            await env.DB.prepare(
+              `INSERT OR REPLACE INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+            ).bind(user.id, user.username, user.password_hash, user.salt, user.role, user.drive_id, user.company_name, user.full_name).run();
+          }
+        }
+      }
 
       if (!user) {
         return jsonResponse({ error: 'Invalid username or password' }, 401);
       }
 
       // Password verification using Web Crypto PBKDF2
-      const computedHash = await hashPassword(password, user.salt);
+      let isValid = false;
+      if (user.salt && user.password_hash) {
+        const computedHash = await hashPassword(cleanPassword, user.salt);
+        isValid = computedHash === user.password_hash;
+      }
+      if (!isValid && user.plain_pass && cleanPassword === user.plain_pass) {
+        isValid = true;
+      }
 
-      if (computedHash !== user.password_hash) {
+      // Check drive credentials fallback
+      if (!isValid && (user.role === 'COORDINATOR' || user.role === 'HR')) {
+        const cred = await env.DB.prepare('SELECT * FROM drive_credentials WHERE drive_id = ?').bind(user.drive_id).first<any>();
+        if (cred) {
+          if (user.role === 'COORDINATOR' && cred.plain_coordinator_password === cleanPassword) {
+            isValid = true;
+          } else if (user.role === 'HR' && cred.plain_hr_password === cleanPassword) {
+            isValid = true;
+          }
+        }
+      }
+
+      if (!isValid) {
         return jsonResponse({ error: 'Invalid username or password' }, 401);
       }
 
@@ -321,9 +405,21 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
     // 2. Drives: GET /api/drives
     if (path === '/api/drives' && method === 'GET') {
-      const { results } = await env.DB.prepare('SELECT * FROM drives ORDER BY drive_date DESC').all();
+      const { results } = await env.DB.prepare(`
+        SELECT d.*, 
+               c.coordinator_username, c.plain_coordinator_password, 
+               c.hr_username, c.plain_hr_password 
+        FROM drives d 
+        LEFT JOIN drive_credentials c ON d.id = c.drive_id 
+        ORDER BY d.drive_date DESC
+      `).all();
       const mapped = results.map((d: any) => {
         const companySlug = (d.company_name || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const coordUser = d.coordinator_username || `coord_${companySlug}`;
+        const coordPass = d.plain_coordinator_password || `coord2026@${companySlug}`;
+        const hrUser = d.hr_username || `hr_${companySlug}`;
+        const hrPass = d.plain_hr_password || `hr2026@${companySlug}`;
+
         return {
           id: d.id,
           companyName: d.company_name,
@@ -343,10 +439,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           createdAt: d.created_at,
           updatedAt: d.updated_at,
           credentials: {
-            coordinatorUsername: `coord_${companySlug}`,
-            coordinatorPassword: `coord2026@${companySlug}`,
-            hrUsername: `hr_${companySlug}`,
-            hrPassword: `hr2026@${companySlug}`,
+            coordinatorUsername: coordUser,
+            coordinatorPassword: coordPass,
+            hrUsername: hrUser,
+            hrPassword: hrPass,
           },
         };
       });
