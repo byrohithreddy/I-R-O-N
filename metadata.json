@@ -1,0 +1,7 @@
+{
+  "name": "IRON - Integrated Recruitment Operations Navigator",
+  "description": "Integrated recruitment operations system for campus placement drives, applications, batches, HR evaluations, and placement records.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
