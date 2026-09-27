@@ -19,7 +19,7 @@ interface ExportSelectedStudentsParams {
 }
 
 /**
- * Exports all student applications for a drive into a beautifully structured Excel (.xlsx) file.
+ * Exports all student applications for a drive into a structured Excel (.xlsx) file.
  */
 export function exportApplicationsToExcel({
   drive,
@@ -58,25 +58,21 @@ export function exportApplicationsToExcel({
     }
 
     return {
-      'S.No': index + 1,
+      'Serial Number': index + 1,
       'Roll Number': student?.rollNumber || 'N/A',
       'Student Name': student?.fullName || 'N/A',
       'Email': app.applicationEmail || student?.email || 'N/A',
-      'Mobile Phone': app.applicationPhone || student?.phone || 'N/A',
-      'Branch / Department': student?.branch || student?.department || 'N/A',
+      'Mobile Number': app.applicationPhone || student?.phone || 'N/A',
+      'Department': student?.department || student?.branch || 'N/A',
       'Academic Year': student?.academicYear || 'N/A',
       'CGPA': student?.cgpa ?? 'N/A',
       'Backlogs': student?.backlogCount ?? 0,
-      'College': student?.college || 'N/A',
-      'Applied Date': app.appliedAt ? new Date(app.appliedAt).toLocaleString() : 'N/A',
       'Eligibility Status': app.eligibilityStatus,
-      'Eligibility Override': app.eligibilityOverride ? 'YES' : 'NO',
-      'Override Reason': app.overrideReason || '',
-      'Furthest Round / Stage': currentStage,
+      'Furthest Round Reached': currentStage,
       'Final Outcome': finalOutcome,
       'Company Name': drive.companyName,
       'Job Role': drive.jobRole,
-      'Package': drive.package,
+      'Package (CTC)': drive.package,
     };
   });
 
@@ -84,21 +80,17 @@ export function exportApplicationsToExcel({
 
   // Auto-fit column widths
   const colWidths = [
-    { wch: 6 },  // S.No
+    { wch: 14 }, // Serial Number
     { wch: 16 }, // Roll Number
     { wch: 24 }, // Student Name
     { wch: 28 }, // Email
-    { wch: 16 }, // Mobile Phone
-    { wch: 20 }, // Branch
+    { wch: 16 }, // Mobile Number
+    { wch: 18 }, // Department
     { wch: 14 }, // Academic Year
     { wch: 8 },  // CGPA
     { wch: 10 }, // Backlogs
-    { wch: 24 }, // College
-    { wch: 22 }, // Applied Date
     { wch: 18 }, // Eligibility Status
-    { wch: 18 }, // Eligibility Override
-    { wch: 26 }, // Override Reason
-    { wch: 26 }, // Furthest Round
+    { wch: 26 }, // Furthest Round Reached
     { wch: 22 }, // Final Outcome
     { wch: 20 }, // Company Name
     { wch: 20 }, // Job Role
@@ -118,7 +110,7 @@ export function exportApplicationsToExcel({
 }
 
 /**
- * Exports all final selected / placed students for a drive into a formatted Excel (.xlsx) file.
+ * Exports all final selected / placed students for a particular drive inside Drive Funnel & Analytics.
  */
 export function exportSelectedStudentsToExcel({
   drive,
@@ -130,21 +122,19 @@ export function exportSelectedStudentsToExcel({
   const rows = placements.map((placement, index) => {
     const student = studentMap.get(placement.studentId);
     return {
-      'S.No': index + 1,
-      'Offer Ref ID': placement.id,
+      'Serial Number': index + 1,
       'Roll Number': student?.rollNumber || 'N/A',
       'Student Name': student?.fullName || 'N/A',
       'Email': student?.email || 'N/A',
-      'Mobile Phone': student?.phone || 'N/A',
-      'Branch / Department': student?.branch || student?.department || 'N/A',
+      'Mobile Number': student?.phone || 'N/A',
+      'Department': student?.department || student?.branch || 'N/A',
       'Academic Year': student?.academicYear || 'N/A',
       'CGPA': student?.cgpa ?? 'N/A',
-      'College': student?.college || 'N/A',
       'Company Name': placement.companyName || drive.companyName,
       'Job Role': placement.jobRole || drive.jobRole,
       'Package (CTC)': placement.package || drive.package,
-      'Selection Date': placement.selectedAt ? new Date(placement.selectedAt).toLocaleString() : new Date().toLocaleString(),
-      'Placement Status': 'CONFIRMED OFFER',
+      'Selection Date': placement.selectedAt ? new Date(placement.selectedAt).toLocaleDateString() : new Date().toLocaleDateString(),
+      'Status': 'CONFIRMED OFFER',
     };
   });
 
@@ -152,20 +142,18 @@ export function exportSelectedStudentsToExcel({
 
   // Auto-fit column widths
   const colWidths = [
-    { wch: 6 },  // S.No
-    { wch: 26 }, // Offer Ref ID
+    { wch: 14 }, // Serial Number
     { wch: 16 }, // Roll Number
     { wch: 24 }, // Student Name
     { wch: 28 }, // Email
-    { wch: 16 }, // Mobile Phone
-    { wch: 20 }, // Branch
+    { wch: 16 }, // Mobile Number
+    { wch: 18 }, // Department
     { wch: 14 }, // Academic Year
     { wch: 8 },  // CGPA
-    { wch: 24 }, // College
     { wch: 20 }, // Company Name
     { wch: 20 }, // Job Role
     { wch: 16 }, // Package (CTC)
-    { wch: 22 }, // Selection Date
+    { wch: 16 }, // Selection Date
     { wch: 18 }, // Status
   ];
   worksheet['!cols'] = colWidths;
@@ -182,68 +170,46 @@ export function exportSelectedStudentsToExcel({
 }
 
 /**
- * Exports all placement records across all drives into a unified Excel (.xlsx) workbook.
+ * Exports placed students from the Placement Repository page.
+ * Strictly includes: Serial Number, Roll Number, Student Name, Email, Mobile Number, Department.
  */
 export function exportAllPlacementsToExcel(
   placements: Placement[],
   students: Student[],
-  drives: Drive[]
+  _drives?: Drive[]
 ) {
   const studentMap = new Map(students.map((s) => [s.id, s]));
-  const driveMap = new Map(drives.map((d) => [d.id, d]));
 
   const rows = placements.map((placement, index) => {
     const student = studentMap.get(placement.studentId);
-    const drive = driveMap.get(placement.driveId);
 
     return {
-      'S.No': index + 1,
-      'Offer Ref ID': placement.id,
+      'Serial Number': index + 1,
       'Roll Number': student?.rollNumber || 'N/A',
       'Student Name': student?.fullName || 'N/A',
       'Email': student?.email || 'N/A',
-      'Mobile Phone': student?.phone || 'N/A',
-      'Branch / Department': student?.branch || student?.department || 'N/A',
-      'Academic Year': student?.academicYear || 'N/A',
-      'CGPA': student?.cgpa ?? 'N/A',
-      'College': student?.college || 'N/A',
-      'Company Name': placement.companyName || drive?.companyName || 'N/A',
-      'Job Role': placement.jobRole || drive?.jobRole || 'N/A',
-      'Package (CTC)': placement.package || drive?.package || 'N/A',
-      'Drive Date': drive?.driveDate || 'N/A',
-      'Selection Date': placement.selectedAt ? new Date(placement.selectedAt).toLocaleString() : 'N/A',
-      'Status': 'CONFIRMED OFFER',
+      'Mobile Number': student?.phone || 'N/A',
+      'Department': student?.department || student?.branch || 'N/A',
     };
   });
 
   const worksheet = XLSX.utils.json_to_sheet(rows);
 
   const colWidths = [
-    { wch: 6 },  // S.No
-    { wch: 26 }, // Offer Ref ID
-    { wch: 16 }, // Roll Number
-    { wch: 24 }, // Student Name
-    { wch: 28 }, // Email
-    { wch: 16 }, // Mobile Phone
-    { wch: 20 }, // Branch
-    { wch: 14 }, // Academic Year
-    { wch: 8 },  // CGPA
-    { wch: 24 }, // College
-    { wch: 20 }, // Company Name
-    { wch: 20 }, // Job Role
-    { wch: 16 }, // Package
-    { wch: 14 }, // Drive Date
-    { wch: 22 }, // Selection Date
-    { wch: 18 }, // Status
+    { wch: 14 }, // Serial Number
+    { wch: 18 }, // Roll Number
+    { wch: 26 }, // Student Name
+    { wch: 30 }, // Email
+    { wch: 18 }, // Mobile Number
+    { wch: 20 }, // Department
   ];
   worksheet['!cols'] = colWidths;
 
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'All Placements');
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Placed Students');
 
   const dateStr = new Date().toISOString().split('T')[0];
-  const fileName = `IRON_All_Placed_Students_${dateStr}.xlsx`;
+  const fileName = `Placement_Repository_Students_${dateStr}.xlsx`;
 
   XLSX.writeFile(workbook, fileName);
 }
-

@@ -56,17 +56,21 @@ export const TpoPlacedStudents: React.FC<TpoPlacedStudentsProps> = () => {
   };
 
   const handleExportCSV = () => {
-    const headers = ['Roll Number,Student Name,Branch,Department,Company,Job Role,Package,Date'];
-    const lines = filteredRows.map(
-      (r) =>
-        `"${r.rollNumber}","${r.name}","${r.branch}","${r.department}","${r.companyName}","${r.jobRole}","${r.package}","${r.selectedAt}"`
-    );
+    const studentMap = new Map(students.map((s) => [s.id, s]));
+    const headers = ['Serial Number,Roll Number,Student Name,Email,Mobile Number,Department'];
+    const lines = filteredRows.map((r, idx) => {
+      const student = studentMap.get(r.studentId);
+      const email = student?.email || 'N/A';
+      const phone = student?.phone || 'N/A';
+      const dept = student?.department || student?.branch || r.department || r.branch || 'N/A';
+      return `"${idx + 1}","${r.rollNumber}","${r.name}","${email}","${phone}","${dept}"`;
+    });
     const content = [headers, ...lines].join('\n');
     const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `IRON_Placed_Students_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `Placement_Repository_Students_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
