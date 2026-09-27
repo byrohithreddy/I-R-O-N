@@ -1,4 +1,4 @@
-7# I.R.O.N. — Institutional Recruitment & Operations Network
+# I.R.O.N. — Institutional Recruitment & Operations Network
 
 <div align="center">
 
