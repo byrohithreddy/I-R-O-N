@@ -1611,11 +1611,12 @@ class IronStorage {
     batchId: string,
     batchStudentId: string,
     studentId: string,
-    action: 'SELECT' | 'HOLD' | 'NONE'
+    action: 'SELECT' | 'HOLD' | 'NONE',
+    allowSubmittedEdit: boolean = true
   ): Evaluation {
     const batch = this.getBatchById(batchId);
     if (!batch) throw new Error('Batch not found.');
-    if (batch.status === 'SUBMITTED') {
+    if (batch.status === 'SUBMITTED' && !allowSubmittedEdit) {
       throw new Error('Batch is frozen and read-only. Evaluations cannot be edited.');
     }
 
@@ -1625,7 +1626,9 @@ class IronStorage {
     }
 
     const evals = this.getEvaluations();
-    const existingIdx = evals.findIndex((e) => e.batchStudentId === batchStudentId);
+    const existingIdx = evals.findIndex(
+      (e) => e.batchStudentId === batchStudentId || (e.batchId === batchId && e.studentId === studentId)
+    );
 
     const now = new Date().toISOString();
     let updated: Evaluation;
@@ -1661,7 +1664,8 @@ class IronStorage {
 
   public submitBatch(
     batchId: string,
-    submittedBy: string
+    submittedBy: string,
+    allowResubmit: boolean = true
   ): {
     selectedCount: number;
     holdCount: number;
@@ -1670,7 +1674,7 @@ class IronStorage {
   } {
     const batch = this.getBatchById(batchId);
     if (!batch) throw new Error('Batch not found.');
-    if (batch.status === 'SUBMITTED') {
+    if (batch.status === 'SUBMITTED' && !allowResubmit) {
       throw new Error('This batch has already been submitted.');
     }
 
@@ -1707,6 +1711,8 @@ class IronStorage {
     }
 
     const applications = this.getApplications(batch.driveId);
+    const students = this.getStudents();
+    const studentMap = new Map(students.map((s) => [s.id, s]));
 
     let selectedCount = 0;
     let holdCount = 0;
@@ -1718,6 +1724,7 @@ class IronStorage {
     for (const bs of batchStudents) {
       const action = evalMap.get(bs.studentId) || 'NONE';
       const app = applications.find((a) => a.studentId === bs.studentId);
+      const student = studentMap.get(bs.studentId);
 
       if (round.isFinalRound) {
         // Final Round Business Logic (Rule 22, 23, 24, 25)
@@ -1747,6 +1754,9 @@ class IronStorage {
             finalRoundId: batch.roundId,
             selectedAt: now,
             createdAt: now,
+            rollNumber: student?.rollNumber,
+            studentName: student?.fullName,
+            branch: student?.branch,
           });
 
           // 3. Update Application Status to PLACED
@@ -1754,7 +1764,7 @@ class IronStorage {
             app.status = 'PLACED';
           }
         } else {
-          // No selection -> REJECTED (Rule 24)
+          // No selection / deselected -> REJECTED (Rule 24)
           rejectedCount++;
           roundResults.push({
             id: `rr_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
@@ -1785,7 +1795,6 @@ class IronStorage {
 
           // Advance to next round as ACTIVE candidate
           if (nextRound) {
-            // Check if already in next round candidate pool
             const alreadyInNext = candidates.some(
               (c) => c.roundId === nextRound.id && c.studentId === bs.studentId
             );
@@ -1800,11 +1809,21 @@ class IronStorage {
                 sourceRoundId: batch.roundId,
                 createdAt: now,
               });
+            } else {
+              // Update status to ACTIVE if previously HOLD
+              const cIdx = candidates.findIndex(
+                (c) => c.roundId === nextRound.id && c.studentId === bs.studentId
+              );
+              if (cIdx !== -1) {
+                candidates[cIdx].entryStatus = 'ACTIVE';
+              }
             }
+          }
+          if (app && app.status !== 'PLACED') {
+            app.status = 'ACTIVE';
           }
         } else if (action === 'HOLD') {
           // HOLD IS NOT REJECTION (Rule 17, 18)
-          // Promoted / Carried forward to next round as candidate!
           holdCount++;
           roundResults.push({
             id: `rr_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
@@ -1827,14 +1846,24 @@ class IronStorage {
                 roundId: nextRound.id,
                 studentId: bs.studentId,
                 applicationId: app?.id || '',
-                entryStatus: 'HOLD', // Marked as HOLD candidate promoted to next round
+                entryStatus: 'HOLD',
                 sourceRoundId: batch.roundId,
                 createdAt: now,
               });
+            } else {
+              const cIdx = candidates.findIndex(
+                (c) => c.roundId === nextRound.id && c.studentId === bs.studentId
+              );
+              if (cIdx !== -1) {
+                candidates[cIdx].entryStatus = 'HOLD';
+              }
             }
           }
+          if (app && app.status !== 'PLACED') {
+            app.status = 'ACTIVE';
+          }
         } else {
-          // No Action -> Automatically REJECTED (Rule 20)
+          // No Action / Deselected -> Automatically REJECTED (Rule 20)
           rejectedCount++;
           roundResults.push({
             id: `rr_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
@@ -1845,7 +1874,7 @@ class IronStorage {
             result: 'REJECTED',
             createdAt: now,
           });
-          if (app) {
+          if (app && app.status !== 'PLACED') {
             app.status = 'REJECTED';
           }
         }

@@ -1229,9 +1229,6 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const batchId = submitBatchMatch[1];
       const batch = await env.DB.prepare('SELECT * FROM batches WHERE id = ?').bind(batchId).first<any>();
       if (!batch) return jsonResponse({ error: 'Batch not found' }, 404);
-      if (batch.status === 'SUBMITTED') {
-        return jsonResponse({ error: 'Batch is already submitted and frozen' }, 400);
-      }
 
       const round = await env.DB.prepare('SELECT * FROM rounds WHERE id = ?').bind(batch.round_id).first<any>();
       const isFinal = Boolean(round?.is_final_round);
@@ -1253,14 +1250,14 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         const action = evaluation ? evaluation.action : 'REJECT';
 
         const resultId = `rr_${round?.id || 'rnd'}_${studentId}`;
-        const outcome = action === 'SELECT' ? 'SELECTED' : action === 'HOLD' ? 'HOLD' : 'REJECTED';
+        const outcome = action === 'SELECT' ? 'SELECTED' : action === 'HOLD' && !isFinal ? 'HOLD' : 'REJECTED';
 
         await env.DB.prepare(
           `INSERT OR REPLACE INTO round_results (id, round_id, drive_id, batch_id, student_id, result, notes, finalized_at, finalized_by)
            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)`
         ).bind(resultId, batch.round_id, batch.drive_id, batchId, studentId, outcome, evaluation?.notes || '', user?.username || 'HR').run();
 
-        if (action === 'SELECT' || action === 'HOLD') {
+        if (action === 'SELECT' || (action === 'HOLD' && !isFinal)) {
           if (!isFinal && nextRound) {
             const app = await env.DB.prepare('SELECT id FROM applications WHERE drive_id = ? AND student_id = ?').bind(batch.drive_id, studentId).first<any>();
             const candId = `cand_${nextRound.id}_${studentId}`;
@@ -1268,6 +1265,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
               `INSERT OR REPLACE INTO round_candidates (id, drive_id, round_id, student_id, application_id, entry_status, source_round_id, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`
             ).bind(candId, batch.drive_id, nextRound.id, studentId, app?.id || null, action === 'HOLD' ? 'HOLD' : 'ACTIVE', batch.round_id).run();
+
+            await env.DB.prepare("UPDATE applications SET status = 'ACTIVE', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ? AND status != 'PLACED'")
+              .bind(batch.drive_id, studentId)
+              .run();
           } else if (isFinal && action === 'SELECT') {
             const student = await env.DB.prepare('SELECT * FROM students WHERE id = ?').bind(studentId).first<any>();
             const placementId = `plc_${batch.drive_id}_${studentId}`;
@@ -1287,14 +1288,24 @@ export const onRequest: PagesFunction<Env> = async (context) => {
                 drive?.package || '₹6.0 LPA',
                 round?.id
               ).run();
+
+              await env.DB.prepare("UPDATE applications SET status = 'PLACED', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ?")
+                .bind(batch.drive_id, studentId)
+                .run();
             }
           }
         } else {
           // If HR marked as REJECT / deselect on edit:
           if (isFinal) {
             await env.DB.prepare('DELETE FROM placements WHERE drive_id = ? AND student_id = ?').bind(batch.drive_id, studentId).run();
+            await env.DB.prepare("UPDATE applications SET status = 'REJECTED', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ?")
+              .bind(batch.drive_id, studentId)
+              .run();
           } else if (nextRound) {
             await env.DB.prepare('DELETE FROM round_candidates WHERE round_id = ? AND student_id = ?').bind(nextRound.id, studentId).run();
+            await env.DB.prepare("UPDATE applications SET status = 'REJECTED', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ? AND status != 'PLACED'")
+              .bind(batch.drive_id, studentId)
+              .run();
           }
         }
       }

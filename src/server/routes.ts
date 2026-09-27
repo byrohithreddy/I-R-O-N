@@ -1751,11 +1751,33 @@ apiRouter.post('/batches/:id/submit', authMiddleware, roleMiddleware(['HR', 'TPO
                 round.id
               )
               .run();
+
+            await db
+              .prepare("UPDATE applications SET status = 'PLACED', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ?")
+              .bind(batch.drive_id, bs.student_id)
+              .run();
           }
         } else {
-          // If rejected, remove any placement for this student on this drive
+          // If rejected/deselected, remove any placement for this student on this drive
           await db
             .prepare('DELETE FROM placements WHERE drive_id = ? AND student_id = ?')
+            .bind(batch.drive_id, bs.student_id)
+            .run();
+
+          await db
+            .prepare("UPDATE applications SET status = 'REJECTED', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ?")
+            .bind(batch.drive_id, bs.student_id)
+            .run();
+        }
+      } else {
+        if (decision === 'SELECTED' || decision === 'HOLD') {
+          await db
+            .prepare("UPDATE applications SET status = 'ACTIVE', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ? AND status != 'PLACED'")
+            .bind(batch.drive_id, bs.student_id)
+            .run();
+        } else {
+          await db
+            .prepare("UPDATE applications SET status = 'REJECTED', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ? AND status != 'PLACED'")
             .bind(batch.drive_id, bs.student_id)
             .run();
         }

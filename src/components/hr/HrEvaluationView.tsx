@@ -66,21 +66,33 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
 
   const batchStudents = selectedBatch ? ironStorage.getBatchStudents(selectedBatch.id) : [];
   const evaluations = selectedBatch ? ironStorage.getEvaluations(selectedBatch.id) : [];
-  const evalMap = new Map(evaluations.map((e) => [e.studentId, e.action]));
+  const evalMap = useMemo(() => new Map(evaluations.map((e) => [e.studentId, e.action])), [evaluations]);
   const roundResults = selectedRound ? ironStorage.getRoundResults(selectedRound.id) : [];
-  const resultMap = new Map(roundResults.map((r) => [r.studentId, r.result]));
+  const resultMap = useMemo(() => new Map(roundResults.map((r) => [r.studentId, r.result])), [roundResults]);
 
   const isBatchSubmitted = selectedBatch?.status === 'SUBMITTED';
   const isFinalRound = selectedRound?.isFinalRound || false;
 
+  // Helper to determine the effective current evaluation action for a student
+  const getStudentAction = (studentId: string): 'SELECT' | 'HOLD' | 'NONE' => {
+    if (evalMap.has(studentId)) {
+      return evalMap.get(studentId) as 'SELECT' | 'HOLD' | 'NONE';
+    }
+    const res = resultMap.get(studentId);
+    if (res === 'SELECTED') return 'SELECT';
+    if (res === 'HOLD' && !isFinalRound) return 'HOLD';
+    return 'NONE';
+  };
+
   const handleAction = (batchStudentId: string, studentId: string, action: 'SELECT' | 'HOLD') => {
     if (!selectedBatch || (isBatchSubmitted && !isEditingSubmitted)) return;
 
-    const currentAction = evalMap.get(studentId);
-    const newAction = currentAction === action ? 'NONE' : action;
+    const currentAction = getStudentAction(studentId);
+    // Toggling: clicking the same action deselects it back to 'NONE'
+    const newAction: 'SELECT' | 'HOLD' | 'NONE' = currentAction === action ? 'NONE' : action;
 
     try {
-      ironStorage.saveEvaluation(selectedBatch.id, batchStudentId, studentId, newAction);
+      ironStorage.saveEvaluation(selectedBatch.id, batchStudentId, studentId, newAction, true);
       onRefresh();
     } catch (err: any) {
       alert(err.message);
@@ -90,7 +102,7 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
   const handleConfirmSubmitBatch = () => {
     if (!selectedBatch) return;
     try {
-      const res = ironStorage.submitBatch(selectedBatch.id, currentUser.username);
+      const res = ironStorage.submitBatch(selectedBatch.id, currentUser.username, true);
       setSubmitResult(res);
       setIsSubmitConfirmOpen(false);
       setIsEditingSubmitted(false);
@@ -106,7 +118,7 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
     const headers = ['Roll Number,Student Name,Branch,Department,CGPA,HR Action,Final Outcome'];
     const lines = batchStudents.map((bs) => {
       const s = studentMap.get(bs.studentId);
-      const action = evalMap.get(bs.studentId) || 'NONE';
+      const action = getStudentAction(bs.studentId);
       const outcome = resultMap.get(bs.studentId) || (action === 'SELECT' ? 'SELECTED' : action === 'HOLD' ? 'HOLD' : 'REJECTED');
       return `"${s?.rollNumber || ''}","${s?.fullName || ''}","${s?.branch || ''}","${s?.department || ''}",${s?.cgpa || ''},"${action}","${outcome}"`;
     });
@@ -127,9 +139,9 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
   let currentNone = 0;
 
   batchStudents.forEach((bs) => {
-    const act = evalMap.get(bs.studentId) || 'NONE';
+    const act = getStudentAction(bs.studentId);
     if (act === 'SELECT') currentSelects++;
-    else if (act === 'HOLD') currentHolds++;
+    else if (act === 'HOLD' && !isFinalRound) currentHolds++;
     else currentNone++;
   });
 
@@ -395,7 +407,7 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
                 <tbody className="divide-y divide-zinc-200">
                   {batchStudents.map((bs) => {
                     const s = studentMap.get(bs.studentId);
-                    const currentAction = evalMap.get(bs.studentId) || 'NONE';
+                    const currentAction = getStudentAction(bs.studentId);
                     const finalResult = resultMap.get(bs.studentId);
 
                     return (
