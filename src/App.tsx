@@ -50,31 +50,16 @@ export default function App() {
 
   // Real-time backend sync & auto-refresh listener (smooth, non-disruptive)
   useEffect(() => {
-    // Initial sync
+    // Initial sync on mount
     ironStorage.syncWithBackend().catch(() => {});
 
-    // Subscribe to backend updates only when changes actually occur
+    // Subscribe to state updates when mutations occur
     const unsubscribe = ironStorage.subscribe(() => {
       setRefreshTick((prev) => prev + 1);
     });
 
-    // Sync on tab focus or when window becomes visible
-    const handleFocus = () => {
-      ironStorage.syncWithBackend().catch(() => {});
-    };
-    window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleFocus);
-
-    // Gentle background poll (every 30 seconds) without remounting or resetting UI state
-    const interval = setInterval(() => {
-      ironStorage.syncWithBackend().catch(() => {});
-    }, 30000);
-
     return () => {
       unsubscribe();
-      clearInterval(interval);
-      window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleFocus);
     };
   }, []);
 

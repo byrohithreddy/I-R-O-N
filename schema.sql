@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS students (
 );
 
 CREATE INDEX IF NOT EXISTS idx_students_roll ON students(roll_number);
+CREATE INDEX IF NOT EXISTS idx_students_roll_upper ON students(UPPER(roll_number));
 CREATE INDEX IF NOT EXISTS idx_students_branch ON students(branch);
 CREATE INDEX IF NOT EXISTS idx_students_cgpa ON students(cgpa);
 
@@ -91,6 +92,7 @@ CREATE TABLE IF NOT EXISTS rounds (
 );
 
 CREATE INDEX IF NOT EXISTS idx_rounds_drive ON rounds(drive_id);
+CREATE INDEX IF NOT EXISTS idx_rounds_drive_num ON rounds(drive_id, round_number);
 
 -- 6. Applications (Rule 12: UNIQUE(drive_id, student_id))
 CREATE TABLE IF NOT EXISTS applications (
@@ -112,6 +114,7 @@ CREATE TABLE IF NOT EXISTS applications (
 
 CREATE INDEX IF NOT EXISTS idx_apps_drive ON applications(drive_id);
 CREATE INDEX IF NOT EXISTS idx_apps_student ON applications(student_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_apps_drive_student ON applications(drive_id, student_id);
 
 -- 7. Round Candidates Pool
 CREATE TABLE IF NOT EXISTS round_candidates (
@@ -130,6 +133,7 @@ CREATE TABLE IF NOT EXISTS round_candidates (
 );
 
 CREATE INDEX IF NOT EXISTS idx_rc_round ON round_candidates(round_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rc_round_student ON round_candidates(round_id, student_id);
 
 -- 8. Batches
 CREATE TABLE IF NOT EXISTS batches (

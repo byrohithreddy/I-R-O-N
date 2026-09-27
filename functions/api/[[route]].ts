@@ -713,9 +713,37 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
 
     // 3. Students: /api/students
+    const studentByRollMatch = path.match(/^\/api\/students\/by-roll\/([a-zA-Z0-9_%-]+)$/);
+    if (studentByRollMatch && method === 'GET') {
+      const cleanRoll = decodeURIComponent(studentByRollMatch[1]).trim().toUpperCase();
+      const s = await env.DB.prepare('SELECT * FROM students WHERE UPPER(roll_number) = ?').bind(cleanRoll).first<any>();
+      if (!s) return jsonResponse({ error: `Student with roll number ${cleanRoll} not found` }, 404);
+      return jsonResponse({
+        id: s.id,
+        rollNumber: s.roll_number,
+        fullName: s.full_name,
+        email: s.email,
+        phone: s.phone,
+        branch: s.branch,
+        department: s.branch,
+        academicYear: s.academic_year || '2022-2026',
+        cgpa: s.cgpa,
+        activeBacklogs: s.active_backlogs,
+        historyOfBacklogs: s.history_of_backlogs,
+        backlogCount: s.active_backlogs,
+        gender: s.gender,
+        college: 'Institute of Engineering & Technology',
+        createdAt: s.created_at,
+        updatedAt: s.updated_at,
+      });
+    }
+
     if (path === '/api/students' && method === 'GET') {
       const search = url.searchParams.get('search') || '';
       const branch = url.searchParams.get('branch') || '';
+      const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10));
+      const limit = Math.min(2000, Math.max(1, parseInt(url.searchParams.get('limit') || '2000', 10)));
+      const offset = (page - 1) * limit;
 
       let sql = 'SELECT * FROM students WHERE 1=1';
       const params: any[] = [];
@@ -727,7 +755,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         sql += ' AND branch = ?';
         params.push(branch);
       }
-      sql += ' ORDER BY roll_number ASC LIMIT 2000';
+      sql += ' ORDER BY roll_number ASC LIMIT ? OFFSET ?';
+      params.push(limit, offset);
 
       const { results } = await env.DB.prepare(sql).bind(...params).all();
       const mapped = results.map((s: any) => ({
@@ -737,10 +766,14 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         email: s.email,
         phone: s.phone,
         branch: s.branch,
+        department: s.branch,
+        academicYear: s.academic_year || '2022-2026',
         cgpa: s.cgpa,
         activeBacklogs: s.active_backlogs,
         historyOfBacklogs: s.history_of_backlogs,
+        backlogCount: s.active_backlogs,
         gender: s.gender,
+        college: 'Institute of Engineering & Technology',
         createdAt: s.created_at,
         updatedAt: s.updated_at,
       }));
@@ -964,58 +997,110 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       return jsonResponse(mapped);
     }
 
-    // 7. Student apply: /api/applications/apply
+    // 7. Student apply: /api/applications/apply (Atomic & 1000-Concurrent-Safe)
     if (path === '/api/applications/apply' && method === 'POST') {
       const { driveId, rollNumber, email, phone } = (await request.json()) as any;
       const cleanRoll = (rollNumber || '').trim().toUpperCase();
 
-      const drive = await env.DB.prepare('SELECT * FROM drives WHERE id = ?').bind(driveId).first<any>();
-      if (!drive) return jsonResponse({ error: 'Drive not found' }, 404);
-
-      if (new Date() >= new Date(drive.application_deadline)) {
-        return jsonResponse({ error: 'Applications are closed for this drive' }, 403);
+      if (!driveId || !cleanRoll) {
+        return jsonResponse({ error: 'Drive ID and Roll Number are required' }, 400);
       }
 
-      const student = await env.DB.prepare('SELECT * FROM students WHERE UPPER(roll_number) = ?').bind(cleanRoll).first<any>();
-      if (!student) {
-        return jsonResponse({ error: `Roll number ${cleanRoll} is not found in Student Master DB` }, 404);
+      // Single consolidated read query using index-backed covering lookup
+      const row = await env.DB.prepare(
+        `SELECT 
+           d.id as drive_id, d.company_name, d.application_deadline, d.minimum_cgpa, d.backlog_rule, d.eligible_branches, d.status as drive_status,
+           s.id as student_id, s.roll_number, s.full_name, s.email as student_email, s.phone as student_phone, s.branch as student_branch, s.cgpa as student_cgpa, s.active_backlogs as student_backlogs,
+           a.id as existing_app_id,
+           r.id as round1_id
+         FROM drives d
+         LEFT JOIN students s ON UPPER(s.roll_number) = UPPER(?)
+         LEFT JOIN applications a ON a.drive_id = d.id AND a.student_id = s.id
+         LEFT JOIN rounds r ON r.drive_id = d.id AND r.round_number = 1
+         WHERE d.id = ?
+         LIMIT 1`
+      ).bind(cleanRoll, driveId).first<any>();
+
+      if (!row || !row.drive_id) {
+        return jsonResponse({ error: 'Drive not found' }, 404);
       }
 
-      const existingApp = await env.DB.prepare('SELECT id FROM applications WHERE drive_id = ? AND student_id = ?').bind(driveId, student.id).first();
-      if (existingApp) {
-        return jsonResponse({ error: `Student ${cleanRoll} has already applied to this drive.` }, 409);
+      if (row.drive_status === 'CANCELLED' || row.drive_status === 'COMPLETED') {
+        return jsonResponse({ error: `This drive is ${row.drive_status.toLowerCase()} and is no longer accepting applications.` }, 403);
       }
 
-      const branches = JSON.parse(drive.eligible_branches || '[]');
+      // Strict deadline check
+      const deadline = new Date(row.application_deadline);
+      if (new Date() >= deadline) {
+        return jsonResponse({ error: 'Applications are closed for this drive (application deadline has passed).' }, 403);
+      }
+
+      if (!row.student_id) {
+        return jsonResponse({ error: `Roll number ${cleanRoll} is not found in Student Master DB. Please contact the TPO office.` }, 404);
+      }
+
+      if (row.existing_app_id) {
+        return jsonResponse({ error: `Student ${cleanRoll} has already applied to this drive. Duplicate applications are prohibited.` }, 409);
+      }
+
+      // Calculate eligibility
+      let branches: string[] = [];
+      try {
+        branches = JSON.parse(row.eligible_branches || '[]');
+      } catch {
+        branches = ['CSE', 'IT', 'ECE'];
+      }
+
+      const branchEligible = branches.some((b: string) => b.trim().toUpperCase() === (row.student_branch || '').trim().toUpperCase());
+      const cgpaEligible = Number(row.student_cgpa) >= Number(row.minimum_cgpa);
       const backlogOk =
-        drive.backlog_rule === 'NOT_APPLICABLE' ||
-        drive.backlog_rule === 'Not applicable' ||
-        drive.backlog_rule === -1 ||
-        drive.backlog_rule === null ||
-        student.active_backlogs <= Number(drive.backlog_rule);
-      const isEligible = branches.includes(student.branch) && student.cgpa >= drive.minimum_cgpa && backlogOk;
+        row.backlog_rule === 'NOT_APPLICABLE' ||
+        row.backlog_rule === 'Not applicable' ||
+        row.backlog_rule === -1 ||
+        row.backlog_rule === null ||
+        row.backlog_rule === undefined ||
+        Number(row.student_backlogs) <= Number(row.backlog_rule);
+
+      const isEligible = branchEligible && cgpaEligible && backlogOk;
 
       const appId = `app_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-      await env.DB.prepare(
+      const appEmail = email || row.student_email || `${cleanRoll.toLowerCase()}@college.edu`;
+      const appPhone = phone || row.student_phone || '';
+
+      const insertApp = env.DB.prepare(
         `INSERT INTO applications (id, drive_id, student_id, application_email, application_phone, eligibility_status, eligibility_override, applied_at)
          VALUES (?, ?, ?, ?, ?, ?, 0, datetime('now'))`
-      )
-        .bind(appId, driveId, student.id, email || student.email, phone || student.phone, isEligible ? 'ELIGIBLE' : 'NOT_ELIGIBLE')
-        .run();
+      ).bind(appId, driveId, row.student_id, appEmail, appPhone, isEligible ? 'ELIGIBLE' : 'NOT_ELIGIBLE');
 
-      if (isEligible) {
-        const round1 = await env.DB.prepare('SELECT id FROM rounds WHERE drive_id = ? AND round_number = 1').bind(driveId).first<any>();
-        if (round1) {
-          await env.DB.prepare(
-            `INSERT OR IGNORE INTO round_candidates (id, drive_id, round_id, student_id, application_id, entry_status, created_at)
-             VALUES (?, ?, ?, ?, ?, 'ACTIVE', datetime('now'))`
-          )
-            .bind(`cand_${round1.id}_${student.id}`, driveId, round1.id, student.id, appId)
-            .run();
-        }
+      const batchStatements = [insertApp];
+
+      if (isEligible && row.round1_id) {
+        const insertCand = env.DB.prepare(
+          `INSERT OR IGNORE INTO round_candidates (id, drive_id, round_id, student_id, application_id, entry_status, created_at)
+           VALUES (?, ?, ?, ?, ?, 'ACTIVE', datetime('now'))`
+        ).bind(`cand_${row.round1_id}_${row.student_id}`, driveId, row.round1_id, row.student_id, appId);
+        batchStatements.push(insertCand);
       }
 
-      return jsonResponse({ success: true, applicationId: appId, eligibilityStatus: isEligible ? 'ELIGIBLE' : 'NOT_ELIGIBLE' }, 201);
+      try {
+        await env.DB.batch(batchStatements);
+      } catch (err: any) {
+        if (err.message && (err.message.includes('UNIQUE') || err.message.includes('constraint') || err.message.includes('applications.drive_id'))) {
+          return jsonResponse({ error: `Student ${cleanRoll} has already applied to this drive.` }, 409);
+        }
+        return jsonResponse({ error: err.message || 'Database error occurred while processing application' }, 500);
+      }
+
+      return jsonResponse({
+        success: true,
+        applicationId: appId,
+        eligibilityStatus: isEligible ? 'ELIGIBLE' : 'NOT_ELIGIBLE',
+        student: {
+          id: row.student_id,
+          rollNumber: row.roll_number,
+          fullName: row.full_name,
+        }
+      }, 201);
     }
 
     // Override application eligibility: POST /api/applications/:id/override

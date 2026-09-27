@@ -1390,6 +1390,107 @@ class IronStorage {
     return newApp;
   }
 
+  /**
+   * High-Concurrency Authoritative Application Submission:
+   * Directly awaits backend D1 atomic batch processing. Only updates local state upon verified HTTP 201 response.
+   */
+  public async applyToDriveAsync(
+    driveId: string,
+    rollNumber: string,
+    email: string,
+    phone: string
+  ): Promise<Application> {
+    const cleanRoll = rollNumber.trim().toUpperCase();
+
+    // 1. Authoritative D1 Batch application execution
+    const res = await api.applications.apply({
+      driveId,
+      rollNumber: cleanRoll,
+      email: email.trim(),
+      phone: phone.trim(),
+    });
+
+    if (!res || !res.applicationId) {
+      throw new Error('Application submission was rejected by the placement server.');
+    }
+
+    // 2. Locate or resolve the student record
+    let student = this.getStudentByRollNumber(cleanRoll);
+    if (!student && res.student) {
+      student = {
+        id: res.student.id,
+        rollNumber: res.student.rollNumber,
+        fullName: res.student.fullName,
+        email: email.trim(),
+        phone: phone.trim(),
+        branch: 'CSE',
+        department: 'Computer Science & Engineering',
+        academicYear: '2022-2026',
+        cgpa: 7.0,
+        backlogCount: 0,
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const students = this.getStudents();
+      students.push(student);
+      this.set(STORAGE_KEYS.STUDENTS, students);
+    }
+
+    const studentId = student?.id || res.student?.id || `std_${cleanRoll}`;
+
+    // 3. Construct authoritative Application object verified by D1
+    const newApp: Application = {
+      id: res.applicationId,
+      driveId,
+      studentId,
+      applicationEmail: email.trim(),
+      applicationPhone: phone.trim(),
+      eligibilityStatus: res.eligibilityStatus || 'ELIGIBLE',
+      eligibilityOverride: false,
+      appliedAt: new Date().toISOString(),
+      status: 'APPLIED',
+    };
+
+    // Update local applications cache with server-verified ID
+    const allApps = this.getApplications();
+    const existingIdx = allApps.findIndex(
+      (a) => a.id === newApp.id || (a.driveId === driveId && a.studentId === studentId)
+    );
+    if (existingIdx >= 0) {
+      allApps[existingIdx] = newApp;
+    } else {
+      allApps.unshift(newApp);
+    }
+    this.set(STORAGE_KEYS.APPLICATIONS, allApps);
+
+    // 4. Enroll into Round 1 Candidates if eligible
+    if (res.eligibilityStatus === 'ELIGIBLE') {
+      const rounds = this.getRounds(driveId);
+      if (rounds.length > 0) {
+        const round1 = rounds[0];
+        const candidates = this.getCandidates();
+        const candExists = candidates.some((c) => c.roundId === round1.id && c.studentId === studentId);
+        if (!candExists) {
+          const newCand: RoundCandidate = {
+            id: `cand_${round1.id}_${studentId}`,
+            driveId,
+            roundId: round1.id,
+            studentId,
+            applicationId: newApp.id,
+            entryStatus: 'ACTIVE',
+            createdAt: new Date().toISOString(),
+          };
+          candidates.push(newCand);
+          this.set(STORAGE_KEYS.CANDIDATES, candidates);
+        }
+      }
+    }
+
+    this.notifyListeners();
+    return newApp;
+  }
+
   public overrideEligibility(applicationId: string, reason: string): Application {
     const apps = this.getApplications();
     const idx = apps.findIndex((a) => a.id === applicationId);

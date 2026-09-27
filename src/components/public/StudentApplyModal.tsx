@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Modal } from '../common/Modal';
 import { Drive, Student } from '../../types';
 import { ironStorage } from '../../services/storage';
-import { CheckCircle2, XCircle, Search, AlertCircle, ArrowRight } from 'lucide-react';
+import { api } from '../../services/api';
+import { CheckCircle2, XCircle, Search, AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 
 interface StudentApplyModalProps {
   isOpen: boolean;
@@ -22,6 +23,9 @@ export const StudentApplyModal: React.FC<StudentApplyModalProps> = ({
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [searched, setSearched] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submittedAppId, setSubmittedAppId] = useState<string | null>(null);
   const [eligibilityResult, setEligibilityResult] = useState<{ isEligible: boolean; reasons: string[] } | null>(null);
   const [alreadyApplied, setAlreadyApplied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +38,9 @@ export const StudentApplyModal: React.FC<StudentApplyModalProps> = ({
       setEmail('');
       setPhone('');
       setSearched(false);
+      setIsVerifying(false);
+      setIsSubmitting(false);
+      setSubmittedAppId(null);
       setEligibilityResult(null);
       setAlreadyApplied(false);
       setError(null);
@@ -43,37 +50,54 @@ export const StudentApplyModal: React.FC<StudentApplyModalProps> = ({
 
   if (!drive) return null;
 
-  const handleLookup = () => {
+  const handleLookup = async () => {
     setError(null);
-    if (!rollNumber.trim()) {
+    const cleanRoll = rollNumber.trim().toUpperCase();
+    if (!cleanRoll) {
       setError('Please enter your college roll number.');
       return;
     }
 
-    const found = ironStorage.getStudentByRollNumber(rollNumber);
-    setSearched(true);
-    if (!found) {
-      setStudent(null);
-      setEligibilityResult(null);
-      setError(`Roll number "${rollNumber.trim().toUpperCase()}" not found in Student Master DB. Please contact the TPO.`);
-      return;
+    setIsVerifying(true);
+    try {
+      // 1. Check local storage first
+      let found = ironStorage.getStudentByRollNumber(cleanRoll);
+
+      // 2. If not found in memory, query server directly
+      if (!found) {
+        try {
+          found = await api.students.getByRollNumber(cleanRoll);
+        } catch {
+          // not found on server
+        }
+      }
+
+      setSearched(true);
+      if (!found) {
+        setStudent(null);
+        setEligibilityResult(null);
+        setError(`Roll number "${cleanRoll}" not found in Student Master DB. Please contact the TPO.`);
+        return;
+      }
+
+      setStudent(found);
+      setEmail(found.email);
+      setPhone(found.phone);
+
+      // Check duplicate
+      const apps = ironStorage.getApplications(drive.id);
+      const existing = apps.some((a) => a.studentId === found!.id);
+      setAlreadyApplied(existing);
+
+      // Check eligibility
+      const el = ironStorage.checkEligibility(found, drive);
+      setEligibilityResult(el);
+    } finally {
+      setIsVerifying(false);
     }
-
-    setStudent(found);
-    setEmail(found.email);
-    setPhone(found.phone);
-
-    // Check duplicate
-    const apps = ironStorage.getApplications(drive.id);
-    const existing = apps.some((a) => a.studentId === found.id);
-    setAlreadyApplied(existing);
-
-    // Check eligibility
-    const el = ironStorage.checkEligibility(found, drive);
-    setEligibilityResult(el);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -92,12 +116,16 @@ export const StudentApplyModal: React.FC<StudentApplyModalProps> = ({
       return;
     }
 
+    setIsSubmitting(true);
     try {
-      ironStorage.applyToDrive(drive.id, student.rollNumber, email, phone);
+      const app = await ironStorage.applyToDriveAsync(drive.id, student.rollNumber, email, phone);
+      setSubmittedAppId(app.id);
       setIsSuccess(true);
       onApplicationSubmitted();
     } catch (err: any) {
-      setError(err.message || 'Failed to submit application.');
+      setError(err.message || 'Failed to submit application. Please retry.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -118,8 +146,13 @@ export const StudentApplyModal: React.FC<StudentApplyModalProps> = ({
             <h3 className="text-base font-semibold text-zinc-950">Application Submitted Successfully</h3>
             <p className="text-xs text-zinc-600 mt-1 max-w-md mx-auto">
               Your application for <span className="font-semibold text-zinc-900">{drive.companyName}</span> has been
-              recorded in IRON. You have been added to the Round 1 candidate pool.
+              authoritatively recorded in IRON. You have been added to the Round 1 candidate pool.
             </p>
+            {submittedAppId && (
+              <div className="mt-3 inline-block px-3 py-1 bg-zinc-100 border border-zinc-200 rounded text-[11px] font-mono text-zinc-800">
+                Application Ref: <span className="font-bold">{submittedAppId}</span>
+              </div>
+            )}
           </div>
           <div className="pt-2">
             <button
@@ -177,10 +210,20 @@ export const StudentApplyModal: React.FC<StudentApplyModalProps> = ({
               <button
                 type="button"
                 onClick={handleLookup}
-                className="px-3.5 py-1.5 text-xs font-medium text-white bg-zinc-900 hover:bg-zinc-800 rounded transition-colors flex items-center gap-1.5 shrink-0"
+                disabled={isVerifying}
+                className="px-3.5 py-1.5 text-xs font-medium text-white bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-400 rounded transition-colors flex items-center gap-1.5 shrink-0"
               >
-                <Search className="w-3.5 h-3.5" />
-                <span>Verify Roll No</span>
+                {isVerifying ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Verifying...</span>
+                  </>
+                ) : (
+                  <>
+                    <Search className="w-3.5 h-3.5" />
+                    <span>Verify Roll No</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -291,17 +334,27 @@ export const StudentApplyModal: React.FC<StudentApplyModalProps> = ({
                   <button
                     type="button"
                     onClick={onClose}
-                    className="px-4 py-2 text-xs font-medium text-zinc-700 bg-white border border-zinc-300 rounded hover:bg-zinc-50 transition-colors"
+                    disabled={isSubmitting}
+                    className="px-4 py-2 text-xs font-medium text-zinc-700 bg-white border border-zinc-300 rounded hover:bg-zinc-50 disabled:opacity-50 transition-colors"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    disabled={!eligibilityResult?.isEligible || alreadyApplied}
+                    disabled={!eligibilityResult?.isEligible || alreadyApplied || isSubmitting}
                     className="px-5 py-2 text-xs font-medium text-white bg-zinc-950 hover:bg-zinc-800 disabled:bg-zinc-300 disabled:cursor-not-allowed rounded transition-colors flex items-center gap-1.5"
                   >
-                    <span>Submit Application</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Securing Registration...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Submit Application</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </>
+                    )}
                   </button>
                 </div>
               </form>
