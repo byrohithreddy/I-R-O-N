@@ -13,23 +13,39 @@ function getAuthHeaders(): HeadersInit {
   return headers;
 }
 
-async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(endpoint: string, options: RequestInit = {}, retries = 0): Promise<T> {
   const headers = {
     ...getAuthHeaders(),
     ...(options.headers || {}),
   };
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  try {
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      headers,
+    });
 
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || 'Server error occurred');
+    // If server is transiently overloaded or recovering (502/503/504/429) and we have retries left
+    if (retries > 0 && [429, 502, 503, 504].includes(response.status)) {
+      const jitterMs = 120 + Math.floor(Math.random() * 180);
+      await new Promise((resolve) => setTimeout(resolve, jitterMs));
+      return request<T>(endpoint, options, retries - 1);
+    }
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Server error occurred');
+    }
+
+    return data as T;
+  } catch (err: any) {
+    if (retries > 0 && !err.message?.includes('already applied') && !err.message?.includes('not found')) {
+      const jitterMs = 120 + Math.floor(Math.random() * 180);
+      await new Promise((resolve) => setTimeout(resolve, jitterMs));
+      return request<T>(endpoint, options, retries - 1);
+    }
+    throw err;
   }
-
-  return data as T;
 }
 
 export const api = {
@@ -161,12 +177,13 @@ export const api = {
       success: boolean;
       applicationId: string;
       eligibilityStatus: 'ELIGIBLE' | 'NOT_ELIGIBLE';
+      student?: { id: string; rollNumber: string; fullName: string };
       reasons?: any;
     }> {
       return request('/applications/apply', {
         method: 'POST',
         body: JSON.stringify(payload),
-      });
+      }, 1);
     },
 
     async override(id: string, reason: string): Promise<{ success: boolean }> {

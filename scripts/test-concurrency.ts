@@ -25,10 +25,10 @@ interface SimulationResult {
 
 export async function runConcurrencyTest(
   apiBaseUrl: string = 'http://localhost:3000/api',
-  concurrencyCount: number = 1000
+  concurrencyCount: number = 1500
 ): Promise<SimulationResult> {
   console.log(`\n======================================================`);
-  console.log(`🚀 STARTING IRON 1,000-CONCURRENT APPLICATION TEST`);
+  console.log(`🚀 STARTING IRON 1,500-CONCURRENT APPLICATION TEST`);
   console.log(`Target API: ${apiBaseUrl}`);
   console.log(`Total Concurrent Virtual Students: ${concurrencyCount}`);
   console.log(`======================================================\n`);
@@ -244,7 +244,7 @@ export async function runConcurrencyTest(
 // When executed directly via `tsx scripts/test-concurrency.ts`
 if (import.meta.url === `file://${process.argv[1]}`) {
   const targetUrl = process.argv[2] || 'http://localhost:3000/api';
-  const count = parseInt(process.argv[3] || '1000', 10);
+  const count = parseInt(process.argv[3] || '1500', 10);
   runConcurrencyTest(targetUrl, count).catch((err) => {
     console.error('Test execution failed:', err);
     process.exit(1);

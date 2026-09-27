@@ -462,6 +462,7 @@ apiRouter.get('/students/by-roll/:rollNumber', async (req: Request, res: Respons
       return res.status(404).json({ error: `Roll number ${cleanRoll} is not found in Student Master DB` });
     }
 
+    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=120');
     res.json({
       id: r.id,
       rollNumber: r.roll_number,
@@ -693,6 +694,7 @@ apiRouter.get('/drives', async (req: Request, res: Response) => {
       };
     });
 
+    res.setHeader('Cache-Control', 'public, max-age=10, s-maxage=30, stale-while-revalidate=60');
     res.json(mapped);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -730,6 +732,7 @@ apiRouter.get('/drives/:id', async (req: Request, res: Response) => {
     const hrUser = d.hr_username || `hr_${companySlug}`;
     const hrPass = d.plain_hr_password || `hr2026@${companySlug}`;
 
+    res.setHeader('Cache-Control', 'public, max-age=10, s-maxage=30, stale-while-revalidate=60');
     res.json({
       id: d.id,
       companyName: d.company_name,
@@ -1271,13 +1274,31 @@ apiRouter.post('/applications/apply', async (req: Request, res: Response) => {
       batchStatements.push(insertCand);
     }
 
-    try {
-      await db.batch(batchStatements);
-    } catch (err: any) {
-      if (err.message && (err.message.includes('UNIQUE') || err.message.includes('constraint') || err.message.includes('applications.drive_id'))) {
-        return res.status(409).json({ error: `Student ${cleanRoll} has already applied to this drive.` });
+    let batchSuccess = false;
+    let lastBatchError: any = null;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await db.batch(batchStatements);
+        batchSuccess = true;
+        break;
+      } catch (err: any) {
+        lastBatchError = err;
+        const msg = (err.message || '').toLowerCase();
+        if (msg.includes('unique') || msg.includes('constraint') || msg.includes('applications.drive_id')) {
+          return res.status(409).json({ error: `Student ${cleanRoll} has already applied to this drive.` });
+        }
+        if (attempt < 3 && (msg.includes('locked') || msg.includes('busy') || msg.includes('sqlite_busy') || msg.includes('timeout'))) {
+          const jitterMs = 30 + Math.floor(Math.random() * 70) * attempt;
+          await new Promise((resolve) => setTimeout(resolve, jitterMs));
+          continue;
+        }
+        break;
       }
-      throw err;
+    }
+
+    if (!batchSuccess) {
+      return res.status(500).json({ error: lastBatchError?.message || 'Database busy. Please tap submit once more.' });
     }
 
     res.status(201).json({

@@ -75,10 +75,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const jsonResponse = (data: any, status = 200) => {
+  const jsonResponse = (data: any, status = 200, extraHeaders: Record<string, string> = {}) => {
     return new Response(JSON.stringify(data), {
       status,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { ...corsHeaders, 'Content-Type': 'application/json', ...extraHeaders },
     });
   };
 
@@ -446,7 +446,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           },
         };
       });
-      return jsonResponse(mapped);
+      return jsonResponse(mapped, 200, {
+        'Cache-Control': 'public, max-age=10, s-maxage=30, stale-while-revalidate=60',
+      });
     }
 
     // Create Drive: POST /api/drives
@@ -608,6 +610,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         retentionExpiresAt: d.retention_expires_at,
         createdAt: d.created_at,
         updatedAt: d.updated_at,
+      }, 200, {
+        'Cache-Control': 'public, max-age=10, s-maxage=30, stale-while-revalidate=60',
       });
     }
 
@@ -735,6 +739,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         college: 'Institute of Engineering & Technology',
         createdAt: s.created_at,
         updatedAt: s.updated_at,
+      }, 200, {
+        'Cache-Control': 'public, max-age=60, s-maxage=120',
       });
     }
 
@@ -1082,13 +1088,31 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         batchStatements.push(insertCand);
       }
 
-      try {
-        await env.DB.batch(batchStatements);
-      } catch (err: any) {
-        if (err.message && (err.message.includes('UNIQUE') || err.message.includes('constraint') || err.message.includes('applications.drive_id'))) {
-          return jsonResponse({ error: `Student ${cleanRoll} has already applied to this drive.` }, 409);
+      let batchSuccess = false;
+      let lastBatchError: any = null;
+
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await env.DB.batch(batchStatements);
+          batchSuccess = true;
+          break;
+        } catch (err: any) {
+          lastBatchError = err;
+          const msg = (err.message || '').toLowerCase();
+          if (msg.includes('unique') || msg.includes('constraint') || msg.includes('applications.drive_id')) {
+            return jsonResponse({ error: `Student ${cleanRoll} has already applied to this drive.` }, 409);
+          }
+          if (attempt < 3 && (msg.includes('locked') || msg.includes('busy') || msg.includes('d1_error') || msg.includes('timeout') || msg.includes('rate'))) {
+            const jitterMs = 30 + Math.floor(Math.random() * 70) * attempt;
+            await new Promise((resolve) => setTimeout(resolve, jitterMs));
+            continue;
+          }
+          break;
         }
-        return jsonResponse({ error: err.message || 'Database error occurred while processing application' }, 500);
+      }
+
+      if (!batchSuccess) {
+        return jsonResponse({ error: lastBatchError?.message || 'Database busy. Please tap submit once more.' }, 500);
       }
 
       return jsonResponse({
