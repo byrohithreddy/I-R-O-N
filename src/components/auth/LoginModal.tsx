@@ -118,13 +118,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               required
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder={
-                selectedRole === 'TPO'
-                  ? 'Enter TPO username (e.g. Tpo_admin)'
-                  : selectedRole === 'COORDINATOR'
-                  ? 'Enter Coordinator username'
-                  : 'Enter HR username'
-              }
+              placeholder="Enter username"
               className="w-full pl-9 pr-3 py-1.5 text-xs border border-zinc-300 rounded font-mono focus:outline-none focus:ring-1 focus:ring-zinc-900 focus:border-zinc-900"
             />
           </div>
