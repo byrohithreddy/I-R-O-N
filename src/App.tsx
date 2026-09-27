@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Github, ExternalLink } from 'lucide-react';
 import { User, Drive } from './types';
 import { ironStorage } from './services/storage';
 import { Header } from './components/layout/Header';
@@ -175,25 +176,22 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4 text-[11px]">
+            <a
+              href="https://github.com/byrohithreddy/I-R-O-N"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 font-medium text-zinc-700 hover:text-zinc-950 transition-colors"
+            >
+              <Github className="w-3.5 h-3.5" />
+              <span>System Architecture</span>
+              <ExternalLink className="w-3 h-3 text-zinc-400" />
+            </a>
+            <span>·</span>
             <button
               onClick={() => handleNavigate('about')}
               className="hover:text-zinc-900 transition-colors"
             >
-              System Architecture
-            </button>
-            <span>·</span>
-            <button
-              onClick={() => {
-                if (window.confirm('Reset local storage demo state to initial seed data?')) {
-                  ironStorage.init(true);
-                  handleRefresh();
-                  alert('Demo database reset to initial pristine state.');
-                }
-              }}
-              className="text-zinc-400 hover:text-rose-600 transition-colors"
-              title="Reset Demo Data"
-            >
-              Reset Seed Data
+              About IRON
             </button>
           </div>
         </div>
