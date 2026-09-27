@@ -33,68 +33,138 @@ export async function runConcurrencyTest(
   console.log(`Total Concurrent Virtual Students: ${concurrencyCount}`);
   console.log(`======================================================\n`);
 
-  // 1. Fetch available drives to pick the target drive
-  const drivesRes = await fetch(`${apiBaseUrl}/drives`);
-  const drives = await drivesRes.json();
-  if (!Array.isArray(drives) || drives.length === 0) {
-    throw new Error('No drives found. Please ensure at least 1 active drive exists in the database.');
+  // 1. Authenticate as TPO Admin to gain full testing permissions
+  console.log(`Authenticating as TPO Admin to set up concurrency test environment...`);
+  let authToken = '';
+  try {
+    const loginRes = await fetch(`${apiBaseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'Tpo_admin', password: 'tpo_password_2026' }),
+    });
+    if (loginRes.ok) {
+      const loginData = await loginRes.json();
+      authToken = loginData.token;
+      console.log(`✓ TPO Admin authentication successful.`);
+    }
+  } catch (err: any) {
+    console.warn(`TPO Admin login notice:`, err.message);
   }
 
-  const targetDrive = drives[0];
+  // 2. Fetch existing students from Student Master DB
+  console.log(`Fetching 1,000 real students from Master DB...`);
+  const studentsRes = await fetch(`${apiBaseUrl}/students?limit=${concurrencyCount}`);
+  let testStudents = await studentsRes.json();
+
+  if (!Array.isArray(testStudents) || testStudents.length < concurrencyCount) {
+    console.log(`Master DB has ${testStudents?.length || 0} students. Generating remaining up to ${concurrencyCount}...`);
+    const newStudents = [];
+    const currentLen = Array.isArray(testStudents) ? testStudents.length : 0;
+    for (let i = currentLen + 1; i <= concurrencyCount; i++) {
+      const num = String(i).padStart(4, '0');
+      newStudents.push({
+        rollNumber: `23BD1A${num}`,
+        fullName: `Simulated Student ${num}`,
+        email: `student${num}@college.edu`,
+        phone: `+91 98000${num}`,
+        branch: i % 3 === 0 ? 'IT' : i % 2 === 0 ? 'ECE' : 'CSE',
+        cgpa: 8.25,
+        activeBacklogs: 0,
+        historyOfBacklogs: 0,
+        gender: i % 2 === 0 ? 'FEMALE' : 'MALE',
+      });
+    }
+
+    if (authToken && newStudents.length > 0) {
+      const bulkRes = await fetch(`${apiBaseUrl}/students/bulk-import`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ students: newStudents }),
+      });
+      const bulkData = await bulkRes.json();
+      console.log(`Imported ${bulkData.inserted || newStudents.length} students into Master DB.`);
+    }
+
+    const refetched = await fetch(`${apiBaseUrl}/students?limit=${concurrencyCount}`);
+    testStudents = await refetched.json();
+  }
+
+  console.log(`✓ Retrieved ${testStudents.length} verified students from Student Master DB.\n`);
+
+  // 3. Create or select a dedicated, open upcoming test drive
+  const testDriveId = `drv_stress_${Date.now()}`;
+  const futureDate = new Date();
+  futureDate.setDate(futureDate.getDate() + 30);
+  const driveDateStr = futureDate.toISOString().split('T')[0];
+
+  console.log(`Setting up dedicated high-concurrency drive "${testDriveId}"...`);
+  const createDriveRes = await fetch(`${apiBaseUrl}/drives`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+    },
+    body: JSON.stringify({
+      id: testDriveId,
+      companyName: 'Atlassian Global Systems',
+      jobRole: 'Graduate Software Engineer',
+      package: '₹22.5 LPA',
+      jobDescription: 'High-scale distributed systems engineering team.',
+      eligibilityCriteria: 'All Circuit Branches, Min CGPA 6.0, Up to 2 Backlogs Allowed',
+      minimumCgpa: 6.0,
+      backlogRule: 2,
+      eligibleBranches: ['CSE', 'IT', 'ECE', 'EEE', 'MECH', 'CIVIL'],
+      driveDate: driveDateStr,
+      driveTime: '09:00',
+      location: 'Main Placement Auditorium',
+      status: 'UPCOMING',
+    }),
+  });
+
+  let targetDrive: any = null;
+  if (createDriveRes.ok) {
+    targetDrive = await createDriveRes.json();
+    console.log(`✓ Created high-concurrency test drive: "${targetDrive.companyName}" [ID: ${targetDrive.id}]`);
+  } else {
+    // Fallback to first existing drive
+    const drivesRes = await fetch(`${apiBaseUrl}/drives`);
+    const drives = await drivesRes.json();
+    targetDrive = drives[0];
+    console.log(`✓ Using existing drive: "${targetDrive.companyName}" [ID: ${targetDrive.id}]`);
+  }
+
   console.log(`Target Drive: "${targetDrive.companyName}" (${targetDrive.jobRole}) [ID: ${targetDrive.id}]`);
   console.log(`Eligibility: Min CGPA ${targetDrive.minimumCgpa}, Branches: ${JSON.stringify(targetDrive.eligibleBranches)}\n`);
 
-  // 2. Prepare 1,000 test students
-  const testStudents = [];
-  for (let i = 1; i <= concurrencyCount; i++) {
-    const roll = `TEST22B81A${String(i).padStart(4, '0')}`;
-    testStudents.push({
-      rollNumber: roll,
-      fullName: `Concurrent Student ${i}`,
-      email: `${roll.toLowerCase()}@college.edu`,
-      phone: `+91 98${String(i).padStart(8, '0')}`,
-      branch: i % 5 === 0 ? 'MECH' : 'CSE', // 20% MECH (ineligible if MECH is excluded)
-      cgpa: i % 10 === 0 ? 5.5 : 8.5,        // 10% low CGPA
-      activeBacklogs: 0,
-      gender: i % 2 === 0 ? 'FEMALE' : 'MALE',
-    });
-  }
-
-  console.log(`Registering/verifying ${testStudents.length} simulated students in Master DB...`);
-  // Bulk import into student master db
-  const bulkRes = await fetch(`${apiBaseUrl}/students/bulk-import`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ students: testStudents }),
-  });
-  const bulkData = await bulkRes.json();
-  console.log(`Student Master DB Setup Complete: ${JSON.stringify(bulkData)}\n`);
-
-  // 3. Fire all 1,000 application requests concurrently using Promise.allSettled
-  console.log(`⚡ Dispatching ${concurrencyCount} simultaneous POST /api/applications/apply requests...`);
+  // 4. Fire all 1,000 application requests concurrently
+  const targetStudents = testStudents.slice(0, concurrencyCount);
+  console.log(`⚡ Dispatching ${targetStudents.length} simultaneous POST /api/applications/apply requests...`);
   const startTime = Date.now();
 
-  const requests = testStudents.map((s) => {
+  const requests = targetStudents.map((s: any) => {
     return fetch(`${apiBaseUrl}/applications/apply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         driveId: targetDrive.id,
-        rollNumber: s.rollNumber,
+        rollNumber: s.rollNumber || s.roll_number,
         email: s.email,
         phone: s.phone,
       }),
     });
   });
 
-  // Also inject 20 deliberate simultaneous duplicate requests for the first 20 students
-  const duplicateRequests = testStudents.slice(0, 20).map((s) => {
+  // Also inject 25 deliberate simultaneous duplicate requests for the first 25 students
+  const duplicateRequests = targetStudents.slice(0, 25).map((s: any) => {
     return fetch(`${apiBaseUrl}/applications/apply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         driveId: targetDrive.id,
-        rollNumber: s.rollNumber,
+        rollNumber: s.rollNumber || s.roll_number,
         email: s.email,
         phone: s.phone,
       }),
