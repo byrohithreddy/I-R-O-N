@@ -1,4 +1,4 @@
-# I.R.O.N. — Institutional Recruitment & Operations Network
+7# I.R.O.N. — Institutional Recruitment & Operations Network
 
 <div align="center">
 
@@ -190,7 +190,7 @@ This software, including all source code, documentation, designs, database schem
 3. **No Reverse Engineering**: Reverse engineering, decompiling, extracting, or repurposing proprietary business logic, scoring mechanisms, and rule engines from this project is strictly prohibited.
 
 For licensing inquiries, commercial partnerships, or custom institutional deployments, please contact:
-📧 **rohith2005hyd@gmail.com**
+📧 **mushkerohithreddy@zohomail.in**
 
 ---
 
