@@ -1204,9 +1204,6 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const { batchId, roundId, studentId, action, notes } = (await request.json()) as any;
       const batch = await env.DB.prepare('SELECT * FROM batches WHERE id = ?').bind(batchId).first<any>();
       if (!batch) return jsonResponse({ error: 'Batch not found' }, 404);
-      if (batch.status === 'SUBMITTED') {
-        return jsonResponse({ error: 'Cannot evaluate students in a submitted/frozen batch' }, 403);
-      }
 
       const round = await env.DB.prepare('SELECT * FROM rounds WHERE id = ?').bind(roundId).first<any>();
       if (round?.is_final_round && action === 'HOLD') {

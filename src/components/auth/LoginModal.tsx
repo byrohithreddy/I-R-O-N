@@ -1,21 +1,20 @@
 import React, { useState } from 'react';
 import { Modal } from '../common/Modal';
 import { User, Drive } from '../../types';
-import { ShieldCheck, UserCheck, Briefcase, Lock, User as UserIcon, Loader2, Sparkles } from 'lucide-react';
+import { ShieldCheck, UserCheck, Briefcase, Lock, User as UserIcon, Loader2 } from 'lucide-react';
 import { api } from '../../services/api';
 
 interface LoginModalProps {
   isOpen: boolean;
   onClose: () => void;
   onLoginSuccess: (user: User) => void;
-  drives: Drive[];
+  drives?: Drive[];
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({
   isOpen,
   onClose,
   onLoginSuccess,
-  drives = [],
 }) => {
   const [selectedRole, setSelectedRole] = useState<'TPO' | 'COORDINATOR' | 'HR'>('TPO');
   const [username, setUsername] = useState('');
@@ -26,35 +25,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const handleRoleSelect = (role: 'TPO' | 'COORDINATOR' | 'HR') => {
     setSelectedRole(role);
     setError(null);
-    if (role === 'TPO') {
-      setUsername('Tpo_admin');
-      setPassword('tpo_password_2026');
-    } else if (drives.length > 0) {
-      const firstDrive = drives[0];
-      const creds = firstDrive.credentials;
-      if (role === 'COORDINATOR') {
-        setUsername(creds?.coordinatorUsername || `coord_${firstDrive.companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
-        setPassword(creds?.coordinatorPassword || `coord2026@${firstDrive.companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
-      } else {
-        setUsername(creds?.hrUsername || `hr_${firstDrive.companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
-        setPassword(creds?.hrPassword || `hr2026@${firstDrive.companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
-      }
-    } else {
-      setUsername('');
-      setPassword('');
-    }
-  };
-
-  const handleQuickFillDrive = (d: Drive) => {
-    setError(null);
-    const creds = d.credentials;
-    if (selectedRole === 'COORDINATOR') {
-      setUsername(creds?.coordinatorUsername || `coord_${d.companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
-      setPassword(creds?.coordinatorPassword || `coord2026@${d.companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
-    } else if (selectedRole === 'HR') {
-      setUsername(creds?.hrUsername || `hr_${d.companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
-      setPassword(creds?.hrPassword || `hr2026@${d.companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
-    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -69,6 +39,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       // Real backend authentication via Cloudflare Worker / Express SQLite DB
       const result = await api.auth.login(cleanUser, cleanPass);
       onLoginSuccess(result.user);
+      setUsername('');
+      setPassword('');
       onClose();
     } catch (err: any) {
       setError(err.message || 'Invalid username or password.');
@@ -126,28 +98,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           </button>
         </div>
 
-        {/* Quick Fill suggestions for Coordinators and HR */}
-        {selectedRole !== 'TPO' && drives.length > 0 && (
-          <div className="p-2.5 bg-zinc-50 border border-zinc-200 rounded text-xs">
-            <div className="flex items-center gap-1 font-semibold text-zinc-800 mb-1.5 text-[11px]">
-              <Sparkles className="w-3 h-3 text-amber-500" />
-              <span>Select Active Drive to Quick-Fill:</span>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {drives.slice(0, 5).map((d) => (
-                <button
-                  key={d.id}
-                  type="button"
-                  onClick={() => handleQuickFillDrive(d)}
-                  className="px-2 py-1 text-[11px] bg-white border border-zinc-200 hover:border-zinc-900 rounded font-medium text-zinc-700 transition-colors"
-                >
-                  {d.companyName}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
         {error && (
           <div className="p-3 text-xs bg-rose-50 border border-rose-200 text-rose-800 rounded">
             {error}
@@ -170,10 +120,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               onChange={(e) => setUsername(e.target.value)}
               placeholder={
                 selectedRole === 'TPO'
-                  ? 'Tpo_admin'
+                  ? 'Enter TPO username (e.g. Tpo_admin)'
                   : selectedRole === 'COORDINATOR'
-                  ? 'coord_google'
-                  : 'hr_google'
+                  ? 'Enter Coordinator username'
+                  : 'Enter HR username'
               }
               className="w-full pl-9 pr-3 py-1.5 text-xs border border-zinc-300 rounded font-mono focus:outline-none focus:ring-1 focus:ring-zinc-900 focus:border-zinc-900"
             />
