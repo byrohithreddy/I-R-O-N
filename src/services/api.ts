@@ -236,7 +236,15 @@ export const api = {
       });
     },
 
-    async submitBatch(batchId: string): Promise<{ success: boolean; batchId: string; status: 'SUBMITTED' }> {
+    async submitBatch(batchId: string): Promise<{
+      success: boolean;
+      batchId: string;
+      status: 'SUBMITTED';
+      selectedCount?: number;
+      holdCount?: number;
+      rejectedCount?: number;
+      placedCount?: number;
+    }> {
       return request(`/batches/${batchId}/submit`, {
         method: 'POST',
       });

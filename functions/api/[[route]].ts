@@ -1244,10 +1244,24 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       const drive = await env.DB.prepare('SELECT * FROM drives WHERE id = ?').bind(batch.drive_id).first<any>();
 
+      let selectedCount = 0;
+      let holdCount = 0;
+      let rejectedCount = 0;
+      let placedCount = 0;
+
       for (const bs of batchStudents) {
         const studentId = bs.student_id;
         const evaluation = evalMap.get(studentId);
         const action = evaluation ? evaluation.action : 'REJECT';
+
+        if (action === 'SELECT') {
+          selectedCount++;
+          if (isFinal) placedCount++;
+        } else if (action === 'HOLD' && !isFinal) {
+          holdCount++;
+        } else {
+          rejectedCount++;
+        }
 
         const resultId = `rr_${round?.id || 'rnd'}_${studentId}`;
         const outcome = action === 'SELECT' ? 'SELECTED' : action === 'HOLD' && !isFinal ? 'HOLD' : 'REJECTED';
@@ -1264,11 +1278,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
             await env.DB.prepare(
               `INSERT OR REPLACE INTO round_candidates (id, drive_id, round_id, student_id, application_id, entry_status, source_round_id, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`
-            ).bind(candId, batch.drive_id, nextRound.id, studentId, app?.id || null, action === 'HOLD' ? 'HOLD' : 'ACTIVE', batch.round_id).run();
-
-            await env.DB.prepare("UPDATE applications SET status = 'ACTIVE', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ? AND status != 'PLACED'")
-              .bind(batch.drive_id, studentId)
-              .run();
+            ).bind(candId, batch.drive_id, nextRound.id, studentId, app?.id || null, action === 'HOLD' ? 'PENDING_EVALUATION' : 'ACTIVE', batch.round_id).run();
           } else if (isFinal && action === 'SELECT') {
             const student = await env.DB.prepare('SELECT * FROM students WHERE id = ?').bind(studentId).first<any>();
             const placementId = `plc_${batch.drive_id}_${studentId}`;
@@ -1288,24 +1298,14 @@ export const onRequest: PagesFunction<Env> = async (context) => {
                 drive?.package || '₹6.0 LPA',
                 round?.id
               ).run();
-
-              await env.DB.prepare("UPDATE applications SET status = 'PLACED', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ?")
-                .bind(batch.drive_id, studentId)
-                .run();
             }
           }
         } else {
           // If HR marked as REJECT / deselect on edit:
           if (isFinal) {
             await env.DB.prepare('DELETE FROM placements WHERE drive_id = ? AND student_id = ?').bind(batch.drive_id, studentId).run();
-            await env.DB.prepare("UPDATE applications SET status = 'REJECTED', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ?")
-              .bind(batch.drive_id, studentId)
-              .run();
           } else if (nextRound) {
             await env.DB.prepare('DELETE FROM round_candidates WHERE round_id = ? AND student_id = ?').bind(nextRound.id, studentId).run();
-            await env.DB.prepare("UPDATE applications SET status = 'REJECTED', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ? AND status != 'PLACED'")
-              .bind(batch.drive_id, studentId)
-              .run();
           }
         }
       }
@@ -1315,7 +1315,15 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         .bind(user?.username || 'HR', batchId)
         .run();
 
-      return jsonResponse({ success: true, batchId, status: 'SUBMITTED' });
+      return jsonResponse({
+        success: true,
+        batchId,
+        status: 'SUBMITTED',
+        selectedCount,
+        holdCount,
+        rejectedCount,
+        placedCount,
+      });
     }
 
     // 12. Round results: /api/round-results/round/:roundId

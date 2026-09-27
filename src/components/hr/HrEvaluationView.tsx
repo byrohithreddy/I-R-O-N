@@ -15,6 +15,7 @@ import {
   Check,
   PauseCircle,
   Edit3,
+  Loader2,
 } from 'lucide-react';
 
 interface HrEvaluationViewProps {
@@ -49,6 +50,7 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
 
   // Submit Batch Confirmation Dialog
   const [isSubmitConfirmOpen, setIsSubmitConfirmOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<{
     selectedCount: number;
     holdCount: number;
@@ -84,7 +86,7 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
     return 'NONE';
   };
 
-  const handleAction = (batchStudentId: string, studentId: string, action: 'SELECT' | 'HOLD') => {
+  const handleAction = async (batchStudentId: string, studentId: string, action: 'SELECT' | 'HOLD') => {
     if (!selectedBatch || (isBatchSubmitted && !isEditingSubmitted)) return;
 
     const currentAction = getStudentAction(studentId);
@@ -92,23 +94,26 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
     const newAction: 'SELECT' | 'HOLD' | 'NONE' = currentAction === action ? 'NONE' : action;
 
     try {
-      ironStorage.saveEvaluation(selectedBatch.id, batchStudentId, studentId, newAction, true);
+      await ironStorage.saveEvaluationAsync(selectedBatch.id, batchStudentId, studentId, newAction, true);
       onRefresh();
     } catch (err: any) {
-      alert(err.message);
+      alert(`Evaluation failed: ${err.message || err}`);
     }
   };
 
-  const handleConfirmSubmitBatch = () => {
+  const handleConfirmSubmitBatch = async () => {
     if (!selectedBatch) return;
+    setIsSubmitting(true);
     try {
-      const res = ironStorage.submitBatch(selectedBatch.id, currentUser.username, true);
+      const res = await ironStorage.submitBatchAsync(selectedBatch.id, currentUser.username, true);
       setSubmitResult(res);
       setIsSubmitConfirmOpen(false);
       setIsEditingSubmitted(false);
       onRefresh();
     } catch (err: any) {
-      alert(`Submission failed: ${err.message}`);
+      alert(`Submission failed: ${err.message || err}`);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -478,30 +483,34 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
       {/* SUBMIT BATCH CONFIRMATION DIALOG (Per Section 49) */}
       <Modal
         isOpen={isSubmitConfirmOpen}
-        onClose={() => setIsSubmitConfirmOpen(false)}
-        title="Confirm Batch Submission & Freeze"
-        subtitle="This action permanently freezes all evaluation decisions"
+        onClose={() => !isSubmitting && setIsSubmitConfirmOpen(false)}
+        title={isEditingSubmitted ? "Confirm Batch Re-Freeze & Save" : "Confirm Batch Submission & Freeze"}
+        subtitle={isEditingSubmitted ? "This action recomputes candidate outcomes and updates backend records" : "This action permanently freezes all evaluation decisions"}
         maxWidth="max-w-md"
       >
         <div className="space-y-4 text-xs">
           <div className="p-3 bg-amber-50 border border-amber-300 rounded text-amber-950 space-y-1.5">
             <div className="font-bold flex items-center gap-1.5">
               <AlertTriangle className="w-4 h-4 text-amber-700" />
-              <span>Batch Submission Rules</span>
+              <span>{isEditingSubmitted ? "Re-Evaluation & Freeze Rules" : "Batch Submission Rules"}</span>
             </div>
             <p className="leading-relaxed">
-              After submission, this batch will be <strong>frozen and cannot be modified</strong>.
+              {isEditingSubmitted ? (
+                <>All changes will be recalculated on the server and <strong>re-frozen</strong>.</>
+              ) : (
+                <>After submission, this batch will be <strong>frozen and stored in the database</strong>.</>
+              )}
             </p>
             {isFinalRound ? (
               <ul className="list-disc list-inside space-y-0.5 pt-1 text-[11px]">
-                <li><strong>SELECT ({currentSelects}):</strong> Automatic placement records generated.</li>
-                <li><strong>No Action ({currentNone}):</strong> Automatically marked as REJECTED.</li>
+                <li><strong>SELECT ({currentSelects}):</strong> Automatic placement records generated / updated.</li>
+                <li><strong>No Action ({currentNone}):</strong> Marked as REJECTED (any previous placement revoked).</li>
               </ul>
             ) : (
               <ul className="list-disc list-inside space-y-0.5 pt-1 text-[11px]">
-                <li><strong>SELECT ({currentSelects}):</strong> Progress to next round candidate pool.</li>
+                <li><strong>SELECT ({currentSelects}):</strong> Promoted to next round candidate pool (ACTIVE).</li>
                 <li><strong>HOLD ({currentHolds}):</strong> Carried forward as HOLD / Pending candidate.</li>
-                <li><strong>No Action ({currentNone}):</strong> Automatically marked as REJECTED.</li>
+                <li><strong>No Action ({currentNone}):</strong> Marked as REJECTED (removed from next round pool).</li>
               </ul>
             )}
           </div>
@@ -509,17 +518,20 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-200">
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={() => setIsSubmitConfirmOpen(false)}
-              className="px-3.5 py-1.5 text-xs font-medium text-zinc-700 bg-white border border-zinc-300 rounded hover:bg-zinc-50"
+              className="px-3.5 py-1.5 text-xs font-medium text-zinc-700 bg-white border border-zinc-300 rounded hover:bg-zinc-50 disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={handleConfirmSubmitBatch}
-              className="px-4 py-1.5 text-xs font-medium text-white bg-zinc-950 hover:bg-zinc-800 rounded transition-colors"
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-zinc-950 hover:bg-zinc-800 rounded transition-colors disabled:opacity-50"
             >
-              Confirm & Submit Batch
+              {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              <span>{isEditingSubmitted ? "Confirm & Re-Freeze" : "Confirm & Submit Batch"}</span>
             </button>
           </div>
         </div>

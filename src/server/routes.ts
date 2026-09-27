@@ -1673,14 +1673,29 @@ apiRouter.post('/batches/:id/submit', authMiddleware, roleMiddleware(['HR', 'TPO
     const hrUser = req.user?.username || 'HR';
     const drive = await db.prepare('SELECT * FROM drives WHERE id = ?').bind(batch.drive_id).first<any>();
 
+    let selectedCount = 0;
+    let holdCount = 0;
+    let rejectedCount = 0;
+    let placedCount = 0;
+
     for (const bs of batchStudents) {
       const evaluation = evalMap.get(bs.student_id);
       let decision: 'SELECTED' | 'HOLD' | 'REJECTED' = 'REJECTED';
 
       if (evaluation) {
-        if (evaluation.action === 'SELECT') decision = 'SELECTED';
-        else if (evaluation.action === 'HOLD' && !isFinal) decision = 'HOLD';
-        else decision = 'REJECTED';
+        if (evaluation.action === 'SELECT') {
+          decision = 'SELECTED';
+          selectedCount++;
+          if (isFinal) placedCount++;
+        } else if (evaluation.action === 'HOLD' && !isFinal) {
+          decision = 'HOLD';
+          holdCount++;
+        } else {
+          decision = 'REJECTED';
+          rejectedCount++;
+        }
+      } else {
+        rejectedCount++;
       }
 
       // Record in round_results
@@ -1714,7 +1729,7 @@ apiRouter.post('/batches/:id/submit', authMiddleware, roleMiddleware(['HR', 'TPO
               batch.drive_id,
               nextRound.id,
               bs.student_id,
-              decision === 'HOLD' ? 'HOLD' : 'ACTIVE',
+              decision === 'HOLD' ? 'PENDING_EVALUATION' : 'ACTIVE',
               round.id
             )
             .run();
@@ -1751,33 +1766,11 @@ apiRouter.post('/batches/:id/submit', authMiddleware, roleMiddleware(['HR', 'TPO
                 round.id
               )
               .run();
-
-            await db
-              .prepare("UPDATE applications SET status = 'PLACED', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ?")
-              .bind(batch.drive_id, bs.student_id)
-              .run();
           }
         } else {
           // If rejected/deselected, remove any placement for this student on this drive
           await db
             .prepare('DELETE FROM placements WHERE drive_id = ? AND student_id = ?')
-            .bind(batch.drive_id, bs.student_id)
-            .run();
-
-          await db
-            .prepare("UPDATE applications SET status = 'REJECTED', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ?")
-            .bind(batch.drive_id, bs.student_id)
-            .run();
-        }
-      } else {
-        if (decision === 'SELECTED' || decision === 'HOLD') {
-          await db
-            .prepare("UPDATE applications SET status = 'ACTIVE', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ? AND status != 'PLACED'")
-            .bind(batch.drive_id, bs.student_id)
-            .run();
-        } else {
-          await db
-            .prepare("UPDATE applications SET status = 'REJECTED', updated_at = datetime('now') WHERE drive_id = ? AND student_id = ? AND status != 'PLACED'")
             .bind(batch.drive_id, bs.student_id)
             .run();
         }
@@ -1790,7 +1783,15 @@ apiRouter.post('/batches/:id/submit', authMiddleware, roleMiddleware(['HR', 'TPO
       .bind(hrUser, batchId)
       .run();
 
-    res.json({ success: true, batchId, status: 'SUBMITTED' });
+    res.json({
+      success: true,
+      batchId,
+      status: 'SUBMITTED',
+      selectedCount,
+      holdCount,
+      rejectedCount,
+      placedCount,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

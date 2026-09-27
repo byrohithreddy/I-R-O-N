@@ -1662,6 +1662,68 @@ class IronStorage {
     return updated;
   }
 
+  public async saveEvaluationAsync(
+    batchId: string,
+    batchStudentId: string,
+    studentId: string,
+    action: 'SELECT' | 'HOLD' | 'NONE',
+    allowSubmittedEdit: boolean = true
+  ): Promise<Evaluation> {
+    const batch = this.getBatchById(batchId);
+    if (!batch) throw new Error('Batch not found.');
+    if (batch.status === 'SUBMITTED' && !allowSubmittedEdit) {
+      throw new Error('Batch is frozen and read-only. Evaluations cannot be edited.');
+    }
+
+    const round = this.getRoundById(batch.roundId);
+    if (round?.isFinalRound && action === 'HOLD') {
+      throw new Error('Rule 22: HOLD is not permitted in the Final Round.');
+    }
+
+    const evals = this.getEvaluations();
+    const prevEvals = JSON.parse(JSON.stringify(evals));
+    const existingIdx = evals.findIndex(
+      (e) => e.batchStudentId === batchStudentId || (e.batchId === batchId && e.studentId === studentId)
+    );
+
+    const now = new Date().toISOString();
+    let updated: Evaluation;
+
+    if (existingIdx !== -1) {
+      updated = { ...evals[existingIdx], action, evaluatedAt: now };
+      evals[existingIdx] = updated;
+    } else {
+      updated = {
+        id: `eval_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+        batchId,
+        batchStudentId,
+        studentId,
+        action,
+        evaluatedAt: now,
+      };
+      evals.push(updated);
+    }
+
+    this.set(STORAGE_KEYS.EVALUATIONS, evals);
+    this.notifyListeners();
+
+    try {
+      await api.evaluations.evaluate({
+        batchId,
+        roundId: batch.roundId,
+        studentId,
+        action: action === 'NONE' ? 'REJECT' : action,
+      });
+    } catch (err: any) {
+      // Rollback on server error
+      this.set(STORAGE_KEYS.EVALUATIONS, prevEvals);
+      this.notifyListeners();
+      throw new Error(`Server rejection: ${err.message || err}`);
+    }
+
+    return updated;
+  }
+
   public submitBatch(
     batchId: string,
     submittedBy: string,
@@ -1903,6 +1965,36 @@ class IronStorage {
     );
 
     return { selectedCount, holdCount, rejectedCount, placedCount };
+  }
+
+  public async submitBatchAsync(
+    batchId: string,
+    submittedBy: string,
+    allowResubmit: boolean = true
+  ): Promise<{
+    selectedCount: number;
+    holdCount: number;
+    rejectedCount: number;
+    placedCount: number;
+  }> {
+    // 1. Process local updates
+    const localResult = this.submitBatch(batchId, submittedBy, allowResubmit);
+
+    // 2. Process authoritative backend submission
+    try {
+      const backendRes = await api.evaluations.submitBatch(batchId);
+      // Synchronize full state from backend to ensure identical data structures across clients
+      await this.syncWithBackend();
+      return {
+        selectedCount: backendRes.selectedCount ?? localResult.selectedCount,
+        holdCount: backendRes.holdCount ?? localResult.holdCount,
+        rejectedCount: backendRes.rejectedCount ?? localResult.rejectedCount,
+        placedCount: backendRes.placedCount ?? localResult.placedCount,
+      };
+    } catch (err: any) {
+      console.warn('Backend submitBatch warning (fallback to local state):', err);
+      return localResult;
+    }
   }
 
   // --- ROUND RESULTS ---
