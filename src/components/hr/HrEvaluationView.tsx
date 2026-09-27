@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { User, Drive, DriveRound, Batch, BatchStudent, Student, Evaluation } from '../../types';
 import { ironStorage } from '../../services/storage';
 import { StatusBadge } from '../common/StatusBadge';
@@ -41,8 +41,8 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
   );
   const selectedBatch = batches.find((b) => b.id === selectedBatchId);
 
-  const students = ironStorage.getStudents();
-  const studentMap = new Map(students.map((s) => [s.id, s]));
+  const students = useMemo(() => ironStorage.getStudents(), []);
+  const studentMap = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
 
   // HR Edit mode for already submitted batches
   const [isEditingSubmitted, setIsEditingSubmitted] = useState(false);

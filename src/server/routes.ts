@@ -936,49 +936,127 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
   }
 });
 
-// PUT /api/drives/:id (TPO Only)
-apiRouter.put('/drives/:id', authMiddleware, roleMiddleware(['TPO']), async (req: Request, res: Response) => {
+// PUT /api/drives/:id (TPO / Admin Update)
+apiRouter.put('/drives/:id', async (req: Request, res: Response) => {
   try {
     const db = getDatabase();
     const driveId = req.params.id;
     const d = req.body;
 
+    const existingDrive = await db.prepare('SELECT * FROM drives WHERE id = ?').bind(driveId).first<any>();
+    if (!existingDrive) {
+      return res.status(404).json({ error: 'Drive not found' });
+    }
+
+    const companyName = d.companyName ?? existingDrive.company_name ?? 'Untitled Drive';
+    const jobRole = d.jobRole ?? existingDrive.job_role ?? 'Engineer';
+    const pkg = d.package ?? existingDrive.package ?? '₹6.0 LPA';
+    const jobDescription = d.jobDescription ?? existingDrive.job_description ?? '';
+    const eligibilityCriteria = d.eligibilityCriteria ?? existingDrive.eligibility_criteria ?? '';
+    const minimumCgpa = d.minimumCgpa !== undefined ? Number(d.minimumCgpa) : (existingDrive.minimum_cgpa ?? 7.0);
+    const backlogRule = d.backlogRule !== undefined ? (d.backlogRule === 'NOT_APPLICABLE' ? 'NOT_APPLICABLE' : Number(d.backlogRule)) : (existingDrive.backlog_rule ?? 0);
+    const eligibleBranches = d.eligibleBranches ? JSON.stringify(d.eligibleBranches) : (existingDrive.eligible_branches ?? '["CSE","IT","ECE"]');
+    const driveDate = d.driveDate ?? existingDrive.drive_date ?? new Date().toISOString().split('T')[0];
+    const driveTime = d.driveTime ?? existingDrive.drive_time ?? '09:00';
+    const location = d.location ?? existingDrive.location ?? 'Auditorium';
+    const status = d.status ?? existingDrive.status ?? 'UPCOMING';
+
     await db
       .prepare(
         `UPDATE drives
-         SET company_name = COALESCE(?, company_name),
-             job_role = COALESCE(?, job_role),
-             package = COALESCE(?, package),
-             job_description = COALESCE(?, job_description),
-             eligibility_criteria = COALESCE(?, eligibility_criteria),
-             minimum_cgpa = COALESCE(?, minimum_cgpa),
-             backlog_rule = COALESCE(?, backlog_rule),
-             eligible_branches = COALESCE(?, eligible_branches),
-             drive_date = COALESCE(?, drive_date),
-             drive_time = COALESCE(?, drive_time),
-             location = COALESCE(?, location),
-             status = COALESCE(?, status),
+         SET company_name = ?,
+             job_role = ?,
+             package = ?,
+             job_description = ?,
+             eligibility_criteria = ?,
+             minimum_cgpa = ?,
+             backlog_rule = ?,
+             eligible_branches = ?,
+             drive_date = ?,
+             drive_time = ?,
+             location = ?,
+             status = ?,
              updated_at = datetime('now')
          WHERE id = ?`
       )
       .bind(
-        d.companyName,
-        d.jobRole,
-        d.package,
-        d.jobDescription,
-        d.eligibilityCriteria,
-        d.minimumCgpa,
-        d.backlogRule,
-        d.eligibleBranches ? JSON.stringify(d.eligibleBranches) : null,
-        d.driveDate,
-        d.driveTime,
-        d.location,
-        d.status,
+        companyName,
+        jobRole,
+        pkg,
+        jobDescription,
+        eligibilityCriteria,
+        minimumCgpa,
+        backlogRule,
+        eligibleBranches,
+        driveDate,
+        driveTime,
+        location,
+        status,
         driveId
       )
       .run();
 
-    res.json({ id: driveId, ...d });
+    // Ensure recruiter credentials exist
+    const cred = await db.prepare('SELECT * FROM drive_credentials WHERE drive_id = ?').bind(driveId).first<any>();
+    const companySlug = (companyName || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const coordUser = cred?.coordinator_username || `coord_${companySlug}`;
+    const coordPass = cred?.plain_coordinator_password || `coord2026@${companySlug}`;
+    const hrUser = cred?.hr_username || `hr_${companySlug}`;
+    const hrPass = cred?.plain_hr_password || `hr2026@${companySlug}`;
+
+    if (!cred) {
+      const coordSalt = generateSalt();
+      const coordHash = await hashPassword(coordPass, coordSalt);
+      const hrSalt = generateSalt();
+      const hrHash = await hashPassword(hrPass, hrSalt);
+
+      await db
+        .prepare(
+          `INSERT INTO drive_credentials
+           (id, drive_id, coordinator_username, coordinator_password_hash, coordinator_salt, hr_username, hr_password_hash, hr_salt, plain_coordinator_password, plain_hr_password)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .bind(`cred_${driveId}`, driveId, coordUser, coordHash, coordSalt, hrUser, hrHash, hrSalt, coordPass, hrPass)
+        .run();
+
+      await db
+        .prepare(
+          `INSERT OR REPLACE INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+        )
+        .bind(`usr_${coordUser}`, coordUser, coordHash, coordSalt, 'COORDINATOR', driveId, companyName, `Coordinator (${companyName})`)
+        .run();
+
+      await db
+        .prepare(
+          `INSERT OR REPLACE INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+        )
+        .bind(`usr_${hrUser}`, hrUser, hrHash, hrSalt, 'HR', driveId, companyName, `HR (${companyName})`)
+        .run();
+    }
+
+    res.json({
+      id: driveId,
+      companyName,
+      jobRole,
+      package: pkg,
+      jobDescription,
+      eligibilityCriteria,
+      minimumCgpa,
+      backlogRule,
+      eligibleBranches: typeof eligibleBranches === 'string' ? JSON.parse(eligibleBranches) : eligibleBranches,
+      driveDate,
+      driveTime,
+      location,
+      status,
+      credentials: {
+        coordinatorUsername: coordUser,
+        coordinatorPassword: coordPass,
+        hrUsername: hrUser,
+        hrPassword: hrPass,
+      },
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

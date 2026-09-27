@@ -802,6 +802,8 @@ class IronStorage {
     }
   }
 
+  private pendingDriveUpdates = new Map<string, { data: Drive; timestamp: number }>();
+
   public clearMemoryCache(): void {
     this.memoryCache.clear();
   }
@@ -852,7 +854,15 @@ class IronStorage {
           this.set(STORAGE_KEYS.STUDENTS, data.students.length > 0 ? data.students : this.getStudents());
         }
         if (Array.isArray(data.drives)) {
-          this.set(STORAGE_KEYS.DRIVES, data.drives);
+          // Merge drives while preserving recent local optimistic updates
+          const mergedDrives = data.drives.map((d) => {
+            const pending = this.pendingDriveUpdates.get(d.id);
+            if (pending && Date.now() - pending.timestamp < 15000) {
+              return { ...d, ...pending.data };
+            }
+            return d;
+          });
+          this.set(STORAGE_KEYS.DRIVES, mergedDrives);
         }
         if (Array.isArray(data.rounds)) {
           this.set(STORAGE_KEYS.ROUNDS, data.rounds);
@@ -1057,9 +1067,17 @@ class IronStorage {
         updatedAt: now,
       };
       drives[idx] = updated;
+      this.pendingDriveUpdates.set(id, { data: updated, timestamp: Date.now() });
       this.set(STORAGE_KEYS.DRIVES, drives);
       this.notifyListeners();
-      api.drives.update(id, updated).then(() => this.syncWithBackend()).catch(console.warn);
+      api.drives.update(id, updated)
+        .then(() => {
+          this.pendingDriveUpdates.delete(id);
+          this.syncWithBackend().catch(() => {});
+        })
+        .catch((err) => {
+          console.warn('Backend drive update warn:', err);
+        });
       return updated;
     } else {
       const companySlug = (driveData.companyName || 'drive')
@@ -1091,6 +1109,7 @@ class IronStorage {
         },
       };
       drives.unshift(newDrive);
+      this.pendingDriveUpdates.set(newDrive.id, { data: newDrive, timestamp: Date.now() });
       this.set(STORAGE_KEYS.DRIVES, drives);
 
       // Save custom rounds if provided by TPO during drive creation
@@ -1145,10 +1164,40 @@ class IronStorage {
           { roundNumber: 2, roundName: 'Round 2: Technical Interview', roundType: 'Technical', isFinalRound: false },
           { roundNumber: 3, roundName: 'Round 3: Final HR Interview', roundType: 'HR', isFinalRound: true },
         ],
-      }).then(() => this.syncWithBackend()).catch(console.warn);
+      })
+        .then(() => {
+          this.pendingDriveUpdates.delete(newDrive.id);
+          this.syncWithBackend().catch(() => {});
+        })
+        .catch((err) => {
+          console.warn('Backend drive create warn:', err);
+        });
 
       return newDrive;
     }
+  }
+
+  public async saveDriveAsync(
+    driveData: Partial<Drive>,
+    id?: string,
+    customRounds?: Array<Omit<DriveRound, 'id' | 'driveId'>>
+  ): Promise<Drive> {
+    const saved = this.saveDrive(driveData, id, customRounds);
+    try {
+      if (id) {
+        await api.drives.update(id, saved);
+        this.pendingDriveUpdates.delete(id);
+      } else {
+        await api.drives.create({
+          ...saved,
+          rounds: customRounds,
+        });
+        this.pendingDriveUpdates.delete(saved.id);
+      }
+    } catch (e) {
+      console.warn('Async drive backend sync error:', e);
+    }
+    return saved;
   }
 
   // --- ROUNDS ---

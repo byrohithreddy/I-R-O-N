@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { User, Drive, DriveRound, Batch, BatchStudent, Student, RoundCandidate } from '../../types';
 import { ironStorage } from '../../services/storage';
 import { StatusBadge } from '../common/StatusBadge';
@@ -44,8 +44,8 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
   );
   const activeBatch = batches.find((b) => b.id === activeBatchId);
 
-  const students = ironStorage.getStudents();
-  const studentMap = new Map(students.map((s) => [s.id, s]));
+  const students = useMemo(() => ironStorage.getStudents(), []);
+  const studentMap = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
 
   // Helper to calculate outcomes for a batch
   const getBatchOutcomes = (batchId: string) => {

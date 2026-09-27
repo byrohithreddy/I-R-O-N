@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Drive, DriveRound, Application, Student, RoundType } from '../../types';
 import { ironStorage } from '../../services/storage';
 import { StatusBadge } from '../common/StatusBadge';
@@ -21,6 +21,9 @@ import {
   ArrowDown,
   Trash2,
   Layers,
+  Send,
+  Loader2,
+  Sparkles,
 } from 'lucide-react';
 
 interface CreateRoundItem {
@@ -44,8 +47,8 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
   onRefresh,
 }) => {
   const drives = ironStorage.getDrives();
-  const students = ironStorage.getStudents();
-  const studentMap = new Map(students.map((s) => [s.id, s]));
+  const students = useMemo(() => ironStorage.getStudents(), []);
+  const studentMap = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
 
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [selectedDrive, setSelectedDrive] = useState<Drive | null>(
@@ -59,6 +62,7 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
   const [isApplicantsOpen, setIsApplicantsOpen] = useState(false);
   const [credentialsDrive, setCredentialsDrive] = useState<Drive | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Status change dialog
   const [confirmStatusDrive, setConfirmStatusDrive] = useState<{ drive: Drive; newStatus: any } | null>(null);
@@ -233,7 +237,7 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
     return true;
   };
 
-  const handleSaveNewDrive = (status: 'UPCOMING' | 'DRAFT') => {
+  const handleSaveNewDrive = async (status: 'UPCOMING' | 'DRAFT') => {
     if (!companyName.trim() || !jobRole.trim()) return;
 
     if (!validateRoundsStep()) {
@@ -241,34 +245,38 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
       return;
     }
 
-    ironStorage.saveDrive(
-      {
-        companyName,
-        jobRole,
-        package: pkg,
-        jobDescription,
-        minimumCgpa,
-        backlogRule,
-        eligibleBranches,
-        eligibilityCriteria,
-        driveDate,
-        driveTime,
-        location,
-        status,
-      },
-      undefined,
-      createRounds.map((r, idx) => ({
-        roundNumber: idx + 1,
-        roundName: r.roundName.trim(),
-        roundType: r.roundType,
-        description: r.description.trim(),
-        status: 'UPCOMING',
-        isFinalRound: r.isFinalRound,
-      }))
-    );
-
-    setIsCreateOpen(false);
-    onRefresh();
+    setIsSaving(true);
+    try {
+      await ironStorage.saveDriveAsync(
+        {
+          companyName,
+          jobRole,
+          package: pkg,
+          jobDescription,
+          minimumCgpa,
+          backlogRule,
+          eligibleBranches,
+          eligibilityCriteria,
+          driveDate,
+          driveTime,
+          location,
+          status,
+        },
+        undefined,
+        createRounds.map((r, idx) => ({
+          roundNumber: idx + 1,
+          roundName: r.roundName.trim(),
+          roundType: r.roundType,
+          description: r.description.trim(),
+          status: 'UPCOMING',
+          isFinalRound: r.isFinalRound,
+        }))
+      );
+      setIsCreateOpen(false);
+      onRefresh();
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleOpenEdit = (drive: Drive) => {
@@ -277,23 +285,49 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
     setIsEditOpen(true);
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async (overrideStatus?: 'UPCOMING' | 'DRAFT') => {
     if (!selectedDrive || !editDriveData.companyName) return;
-    ironStorage.saveDrive(editDriveData, selectedDrive.id);
-    setIsEditOpen(false);
-    onRefresh();
+    setIsSaving(true);
+    try {
+      const dataToSave = {
+        ...editDriveData,
+        ...(overrideStatus ? { status: overrideStatus } : {}),
+      };
+      await ironStorage.saveDriveAsync(dataToSave, selectedDrive.id);
+      setIsEditOpen(false);
+      onRefresh();
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleStatusChange = (drive: Drive, newStatus: any) => {
-    ironStorage.saveDrive({ status: newStatus }, drive.id);
-    setConfirmStatusDrive(null);
-    onRefresh();
+  const handleQuickPublish = async (drive: Drive) => {
+    setIsSaving(true);
+    try {
+      await ironStorage.saveDriveAsync({ status: 'UPCOMING' }, drive.id);
+      onRefresh();
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const filteredDrives = drives.filter((d) => {
-    if (filterStatus === 'ALL') return true;
-    return d.status === filterStatus;
-  });
+  const handleStatusChange = async (drive: Drive, newStatus: any) => {
+    setIsSaving(true);
+    try {
+      await ironStorage.saveDriveAsync({ status: newStatus }, drive.id);
+      setConfirmStatusDrive(null);
+      onRefresh();
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const filteredDrives = useMemo(() => {
+    return drives.filter((d) => {
+      if (filterStatus === 'ALL') return true;
+      return d.status === filterStatus;
+    });
+  }, [drives, filterStatus]);
 
   return (
     <div className="space-y-6">
@@ -377,7 +411,21 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
                     </button>
                   </td>
                   <td className="py-3 px-3">
-                    <StatusBadge status={d.status} />
+                    <div className="flex items-center gap-1.5">
+                      <StatusBadge status={d.status} />
+                      {d.status === 'DRAFT' && (
+                        <button
+                          type="button"
+                          onClick={() => handleQuickPublish(d)}
+                          disabled={isSaving}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded shadow-xs transition-colors"
+                          title="Publish this Draft Drive immediately"
+                        >
+                          <Send className="w-2.5 h-2.5" />
+                          <span>Publish</span>
+                        </button>
+                      )}
+                    </div>
                   </td>
                   <td className="py-3 px-3 text-right space-x-2">
                     <button
@@ -963,12 +1011,24 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
       {/* EDIT DRIVE MODAL (Per Rule: TPO can edit drive at any time) */}
       <Modal
         isOpen={isEditOpen}
-        onClose={() => setIsEditOpen(false)}
+        onClose={() => !isSaving && setIsEditOpen(false)}
         title={`Edit Drive: ${editDriveData.companyName}`}
         subtitle="Update schedules, eligibility thresholds, or active status"
         maxWidth="max-w-xl"
       >
         <div className="space-y-4 text-xs">
+          {editDriveData.status === 'DRAFT' && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded flex items-start gap-2.5 text-amber-900">
+              <Sparkles className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <div className="font-semibold text-xs">Draft Drive Mode</div>
+                <div className="text-[11px] text-amber-800 mt-0.5">
+                  This drive is currently in Draft status and hidden from students. Click <strong>Publish Drive</strong> below to make it live and open applications.
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-zinc-700 font-medium mb-1">Company Name</label>
@@ -1113,21 +1173,48 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-2 pt-4 border-t border-zinc-200">
+          <div className="flex items-center justify-between gap-2 pt-4 border-t border-zinc-200">
             <button
               type="button"
               onClick={() => setIsEditOpen(false)}
+              disabled={isSaving}
               className="px-3.5 py-1.5 text-xs font-medium text-zinc-700 bg-white border border-zinc-300 rounded hover:bg-zinc-50"
             >
               Cancel
             </button>
-            <button
-              type="button"
-              onClick={handleSaveEdit}
-              className="px-4 py-1.5 text-xs font-medium text-white bg-zinc-950 hover:bg-zinc-800 rounded"
-            >
-              Save Changes
-            </button>
+            <div className="flex items-center gap-2">
+              {editDriveData.status === 'DRAFT' && (
+                <button
+                  type="button"
+                  onClick={() => handleSaveEdit('DRAFT')}
+                  disabled={isSaving}
+                  className="px-3.5 py-1.5 text-xs font-medium text-zinc-700 bg-white border border-zinc-300 rounded hover:bg-zinc-50"
+                >
+                  Save Draft
+                </button>
+              )}
+              {editDriveData.status === 'DRAFT' ? (
+                <button
+                  type="button"
+                  onClick={() => handleSaveEdit('UPCOMING')}
+                  disabled={isSaving}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-emerald-700 hover:bg-emerald-800 rounded shadow-xs"
+                >
+                  {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  <span>Publish Drive</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleSaveEdit()}
+                  disabled={isSaving}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-zinc-950 hover:bg-zinc-800 rounded"
+                >
+                  {isSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Save Changes</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </Modal>

@@ -614,41 +614,72 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     if (driveMatch && method === 'PUT') {
       const driveId = driveMatch[1];
       const d = (await request.json()) as any;
+
+      const existingDrive = await env.DB.prepare('SELECT * FROM drives WHERE id = ?').bind(driveId).first<any>();
+      if (!existingDrive) return jsonResponse({ error: 'Drive not found' }, 404);
+
+      const companyName = d.companyName ?? existingDrive.company_name ?? 'Untitled Drive';
+      const jobRole = d.jobRole ?? existingDrive.job_role ?? 'Engineer';
+      const pkg = d.package ?? existingDrive.package ?? '₹6.0 LPA';
+      const jobDescription = d.jobDescription ?? existingDrive.job_description ?? '';
+      const eligibilityCriteria = d.eligibilityCriteria ?? existingDrive.eligibility_criteria ?? '';
+      const minimumCgpa = d.minimumCgpa !== undefined ? Number(d.minimumCgpa) : (existingDrive.minimum_cgpa ?? 7.0);
+      const backlogRule = d.backlogRule !== undefined ? (d.backlogRule === 'NOT_APPLICABLE' ? 'NOT_APPLICABLE' : Number(d.backlogRule)) : (existingDrive.backlog_rule ?? 0);
+      const eligibleBranches = d.eligibleBranches ? JSON.stringify(d.eligibleBranches) : (existingDrive.eligible_branches ?? '["CSE","IT","ECE"]');
+      const driveDate = d.driveDate ?? existingDrive.drive_date ?? new Date().toISOString().split('T')[0];
+      const driveTime = d.driveTime ?? existingDrive.drive_time ?? '09:00';
+      const location = d.location ?? existingDrive.location ?? 'Auditorium';
+      const status = d.status ?? existingDrive.status ?? 'UPCOMING';
+
       await env.DB.prepare(
         `UPDATE drives
-         SET company_name = COALESCE(?, company_name),
-             job_role = COALESCE(?, job_role),
-             package = COALESCE(?, package),
-             job_description = COALESCE(?, job_description),
-             eligibility_criteria = COALESCE(?, eligibility_criteria),
-             minimum_cgpa = COALESCE(?, minimum_cgpa),
-             backlog_rule = COALESCE(?, backlog_rule),
-             eligible_branches = COALESCE(?, eligible_branches),
-             drive_date = COALESCE(?, drive_date),
-             drive_time = COALESCE(?, drive_time),
-             location = COALESCE(?, location),
-             status = COALESCE(?, status),
+         SET company_name = ?,
+             job_role = ?,
+             package = ?,
+             job_description = ?,
+             eligibility_criteria = ?,
+             minimum_cgpa = ?,
+             backlog_rule = ?,
+             eligible_branches = ?,
+             drive_date = ?,
+             drive_time = ?,
+             location = ?,
+             status = ?,
              updated_at = datetime('now')
          WHERE id = ?`
       )
         .bind(
-          d.companyName,
-          d.jobRole,
-          d.package,
-          d.jobDescription,
-          d.eligibilityCriteria,
-          d.minimumCgpa,
-          d.backlogRule,
-          d.eligibleBranches ? JSON.stringify(d.eligibleBranches) : null,
-          d.driveDate,
-          d.driveTime,
-          d.location,
-          d.status,
+          companyName,
+          jobRole,
+          pkg,
+          jobDescription,
+          eligibilityCriteria,
+          minimumCgpa,
+          backlogRule,
+          eligibleBranches,
+          driveDate,
+          driveTime,
+          location,
+          status,
           driveId
         )
         .run();
 
-      return jsonResponse({ id: driveId, ...d });
+      return jsonResponse({
+        id: driveId,
+        companyName,
+        jobRole,
+        package: pkg,
+        jobDescription,
+        eligibilityCriteria,
+        minimumCgpa,
+        backlogRule,
+        eligibleBranches: typeof eligibleBranches === 'string' ? JSON.parse(eligibleBranches) : eligibleBranches,
+        driveDate,
+        driveTime,
+        location,
+        status,
+      });
     }
 
     // Purge Drive: DELETE /api/drives/:id/purge
