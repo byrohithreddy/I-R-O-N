@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Drive, DriveRound, Application, RoundCandidate, Placement, Student } from '../../types';
 import { ironStorage } from '../../services/storage';
-import { ArrowLeft, ArrowDown, Users, CheckCircle2, XCircle, Clock, Award } from 'lucide-react';
+import { ArrowLeft, ArrowDown, Users, CheckCircle2, XCircle, Clock, Award, FileSpreadsheet, Download } from 'lucide-react';
+import { exportApplicationsToExcel, exportSelectedStudentsToExcel } from '../../services/excelExport';
 
 interface TpoDriveAnalyticsProps {
   initialDriveId?: string;
@@ -16,6 +17,7 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
   const [selectedDriveId, setSelectedDriveId] = useState<string>(
     initialDriveId || (drives.length > 0 ? drives[0].id : '')
   );
+  const [exportFeedback, setExportFeedback] = useState<string | null>(null);
 
   const drive = drives.find((d) => d.id === selectedDriveId);
   const students = ironStorage.getStudents();
@@ -42,6 +44,41 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
   const placementRate =
     applications.length > 0 ? ((finalPlacedCount / applications.length) * 100).toFixed(1) : '0';
 
+  const handleExportApplications = () => {
+    if (applications.length === 0) {
+      setExportFeedback('No applications found to export for this drive.');
+      setTimeout(() => setExportFeedback(null), 3000);
+      return;
+    }
+    exportApplicationsToExcel({
+      drive,
+      applications,
+      students,
+      rounds,
+      candidates,
+      results,
+      placements,
+    });
+    setExportFeedback(`Exported ${applications.length} applications to Excel.`);
+    setTimeout(() => setExportFeedback(null), 3500);
+  };
+
+  const handleExportSelected = () => {
+    if (placements.length === 0) {
+      setExportFeedback('No selected/placed candidates recorded yet for this drive.');
+      setTimeout(() => setExportFeedback(null), 3000);
+      return;
+    }
+    exportSelectedStudentsToExcel({
+      drive,
+      placements,
+      students,
+      rounds,
+    });
+    setExportFeedback(`Exported ${placements.length} selected students to Excel.`);
+    setTimeout(() => setExportFeedback(null), 3500);
+  };
+
   // Branch breakdown of applicants
   const branchCounts: Record<string, { applied: number; placed: number }> = {};
   applications.forEach((a) => {
@@ -60,7 +97,7 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
   return (
     <div className="space-y-6">
       {/* Top Header & Selector */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-200 pb-4">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-zinc-200 pb-4">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -78,21 +115,55 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 self-start sm:self-auto text-xs">
-          <span className="text-zinc-500 font-medium">Select Drive:</span>
-          <select
-            value={selectedDriveId}
-            onChange={(e) => setSelectedDriveId(e.target.value)}
-            className="px-3 py-1.5 text-xs font-semibold border border-zinc-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-zinc-900"
-          >
-            {drives.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.companyName} ({d.jobRole})
-              </option>
-            ))}
-          </select>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="text-zinc-500 font-medium">Drive:</span>
+            <select
+              value={selectedDriveId}
+              onChange={(e) => setSelectedDriveId(e.target.value)}
+              className="px-3 py-1.5 text-xs font-semibold border border-zinc-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-zinc-900"
+            >
+              {drives.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.companyName} ({d.jobRole})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Excel Export Action Buttons */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportApplications}
+              className="px-3 py-1.5 text-xs font-medium bg-white hover:bg-zinc-50 text-zinc-900 border border-zinc-300 rounded flex items-center gap-1.5 shadow-xs transition-colors"
+              title="Download all registered applications for this drive in Excel (.xlsx)"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Export Applications ({applications.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportSelected}
+              disabled={placements.length === 0}
+              className="px-3 py-1.5 text-xs font-medium bg-emerald-700 hover:bg-emerald-800 disabled:bg-zinc-100 disabled:text-zinc-400 disabled:border-zinc-200 text-white rounded flex items-center gap-1.5 shadow-xs transition-colors"
+              title="Download final selected / placed candidates list in Excel (.xlsx)"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export Selected ({placements.length})</span>
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Export Toast / Notification */}
+      {exportFeedback && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-lg text-xs flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span className="font-medium">{exportFeedback}</span>
+        </div>
+      )}
 
       {/* Top Level Metric Cards (Per Section 55) */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

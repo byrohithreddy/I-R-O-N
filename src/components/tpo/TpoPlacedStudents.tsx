@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { Placement, Student, Drive } from '../../types';
 import { ironStorage } from '../../services/storage';
-import { Download, Search, CheckCircle2, Building, Award } from 'lucide-react';
+import { Download, Search, CheckCircle2, Building, Award, FileSpreadsheet } from 'lucide-react';
+import { exportAllPlacementsToExcel } from '../../services/excelExport';
 
 interface TpoPlacedStudentsProps {
-  onRefresh: () => void;
+  onRefresh?: () => void;
 }
 
 export const TpoPlacedStudents: React.FC<TpoPlacedStudentsProps> = () => {
@@ -50,6 +51,10 @@ export const TpoPlacedStudents: React.FC<TpoPlacedStudentsProps> = () => {
     return matchesSearch && matchesCompany && matchesBranch;
   });
 
+  const handleExportExcel = () => {
+    exportAllPlacementsToExcel(placements, students, drives);
+  };
+
   const handleExportCSV = () => {
     const headers = ['Roll Number,Student Name,Branch,Department,Company,Job Role,Package,Date'];
     const lines = filteredRows.map(
@@ -77,14 +82,24 @@ export const TpoPlacedStudents: React.FC<TpoPlacedStudentsProps> = () => {
             Authoritative placement registry across all campus recruitment drives. Multiple offers per student supported.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleExportCSV}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-zinc-700 bg-white border border-zinc-300 hover:bg-zinc-50 rounded transition-colors self-start sm:self-auto"
-        >
-          <Download className="w-3.5 h-3.5 text-zinc-500" />
-          <span>Export Placements CSV</span>
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <button
+            type="button"
+            onClick={handleExportExcel}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-emerald-700 hover:bg-emerald-800 rounded transition-colors shadow-xs"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>Export Placements Excel</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleExportCSV}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-zinc-700 bg-white border border-zinc-300 hover:bg-zinc-50 rounded transition-colors"
+          >
+            <Download className="w-3.5 h-3.5 text-zinc-500" />
+            <span>CSV</span>
+          </button>
+        </div>
       </div>
 
       {/* Summary Stat Bar */}
