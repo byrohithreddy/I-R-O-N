@@ -95,6 +95,23 @@ export async function initializeDatabase(db: IronDatabase): Promise<void> {
     db.exec(schemaSql);
   }
 
+  // Keep older local SQLite databases compatible with the authoritative Student Master schema.
+  try {
+    const columns = await db.prepare('PRAGMA table_info(students)').all<any>();
+    const names = new Set(columns.results.map((r: any) => r.name));
+    for (const [name, definition] of [
+      ['college', "TEXT NOT NULL DEFAULT ''"],
+      ['department', "TEXT NOT NULL DEFAULT ''"],
+      ['academic_year', "TEXT NOT NULL DEFAULT '2023-2027'"],
+    ] as Array<[string, string]>) {
+      if (!names.has(name)) {
+        db.exec(`ALTER TABLE students ADD COLUMN ${name} ${definition}`);
+      }
+    }
+  } catch (e) {
+    console.warn('Student schema compatibility check failed:', e);
+  }
+
   // Ensure UNIQUE index on rounds(drive_id, round_number)
   try {
     db.exec(`
