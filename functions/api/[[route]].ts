@@ -59,8 +59,30 @@ async function hashPassword(password: string, salt: string): Promise<string> {
   return Array.from(new Uint8Array(derivedBits)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+async function ensureStudentMasterSchema(db: D1Database): Promise<void> {
+  const { results } = await db.prepare('PRAGMA table_info(students)').all<any>();
+  const columns = new Set(results.map((r: any) => r.name));
+  const additions: Array<[string, string]> = [
+    ['college', "TEXT NOT NULL DEFAULT ''"],
+    ['department', "TEXT NOT NULL DEFAULT ''"],
+    ['academic_year', "TEXT NOT NULL DEFAULT '2023-2027'"],
+  ];
+
+  for (const [name, definition] of additions) {
+    if (!columns.has(name)) {
+      await db.prepare(`ALTER TABLE students ADD COLUMN ${name} ${definition}`).run();
+    }
+  }
+}
+
 export const onRequest: PagesFunction<Env> = async (context) => {
   const { request, env } = context;
+
+  try {
+    await ensureStudentMasterSchema(env.DB);
+  } catch (error) {
+    console.error('Student schema initialization failed:', error);
+  }
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
