@@ -211,7 +211,7 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
     if (!importText.trim()) return;
 
     const lines = importText.trim().split('\n');
-    const existingRolls = new Set(students.map((s) => s.rollNumber.toUpperCase()));
+    const existingRolls = new Set<string>();
 
     const valid: Student[] = [];
     const invalid: { row: number; reason: string }[] = [];
@@ -258,11 +258,11 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
         rollNumber: cleanRoll,
         fullName: name,
         email: email || `${cleanRoll.toLowerCase()}@college.edu`,
-        phone: phone || '+91 90000 00000',
+        phone: phone || '',
         college: college || 'Institute of Engineering & Technology',
         branch: branch || 'CSE',
         department: department || 'Engineering',
-        academicYear: year || '2022-2026',
+        academicYear: year || '2023-2027',
         cgpa,
         backlogCount: backlogs,
         isActive: true,
