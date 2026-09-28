@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { User, Drive, DriveRound, Batch, BatchStudent, Student, Evaluation } from '../../types';
 import { ironStorage } from '../../services/storage';
 import { StatusBadge } from '../common/StatusBadge';
@@ -16,6 +16,11 @@ import {
   PauseCircle,
   Edit3,
   Loader2,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from 'lucide-react';
 
 interface HrEvaluationViewProps {
@@ -84,6 +89,62 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
     if (res === 'SELECTED') return 'SELECT';
     if (res === 'HOLD' && !isFinalRound) return 'HOLD';
     return 'NONE';
+  };
+
+  // Search & Pagination State
+  const [searchTerm, setSearchTerm] = useState('');
+  const [actionFilter, setActionFilter] = useState<'ALL' | 'SELECT' | 'HOLD' | 'NONE'>('ALL');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [jumpPageInput, setJumpPageInput] = useState('');
+
+  // Reset to page 1 whenever selected batch, search term, action filter, or page size changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedBatchId, searchTerm, actionFilter, pageSize]);
+
+  // Filtered batch students
+  const filteredBatchStudents = useMemo(() => {
+    const clean = searchTerm.trim().toLowerCase();
+    return batchStudents.filter((bs) => {
+      const s = studentMap.get(bs.studentId);
+      if (!s) return false;
+      const matchesSearch =
+        !clean ||
+        s.fullName.toLowerCase().includes(clean) ||
+        s.rollNumber.toLowerCase().includes(clean) ||
+        s.branch.toLowerCase().includes(clean) ||
+        (s.department && s.department.toLowerCase().includes(clean));
+
+      const act = getStudentAction(bs.studentId);
+      const matchesAction = actionFilter === 'ALL' || act === actionFilter;
+
+      return matchesSearch && matchesAction;
+    });
+  }, [batchStudents, studentMap, searchTerm, actionFilter, evalMap, resultMap]);
+
+  const totalBatchStudents = filteredBatchStudents.length;
+  const totalPages = Math.max(1, Math.ceil(totalBatchStudents / pageSize));
+  const safePage = Math.min(Math.max(1, currentPage), totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalBatchStudents);
+
+  const paginatedBatchStudents = useMemo(() => {
+    return filteredBatchStudents.slice(startIndex, endIndex);
+  }, [filteredBatchStudents, startIndex, endIndex]);
+
+  const handlePageChange = (newPage: number) => {
+    const target = Math.min(Math.max(1, newPage), totalPages);
+    setCurrentPage(target);
+  };
+
+  const handleJumpSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsed = parseInt(jumpPageInput, 10);
+    if (!isNaN(parsed) && parsed >= 1 && parsed <= totalPages) {
+      setCurrentPage(parsed);
+      setJumpPageInput('');
+    }
   };
 
   const handleAction = async (batchStudentId: string, studentId: string, action: 'SELECT' | 'HOLD') => {
@@ -390,10 +451,65 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
             </div>
           )}
 
+          {/* Search, Filter and Results Toolbar */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-zinc-50 p-3 rounded-lg border border-zinc-200">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
+              <div className="relative w-full sm:w-64">
+                <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none text-zinc-400">
+                  <Search className="w-3.5 h-3.5" />
+                </span>
+                <input
+                  type="text"
+                  placeholder="Search by name, roll no, branch..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 text-xs border border-zinc-300 rounded focus:outline-none focus:ring-1 focus:ring-zinc-900 bg-white"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-zinc-500 font-medium">Decision:</span>
+                <select
+                  value={actionFilter}
+                  onChange={(e) => setActionFilter(e.target.value as any)}
+                  className="px-2.5 py-1.5 text-xs border border-zinc-300 rounded focus:outline-none focus:ring-1 focus:ring-zinc-900 bg-white"
+                >
+                  <option value="ALL">All Decisions</option>
+                  <option value="SELECT">To be SELECTED</option>
+                  {!isFinalRound && <option value="HOLD">To be HELD</option>}
+                  <option value="NONE">No Action (Auto-Reject)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Range Counter and Rows Selector */}
+            <div className="flex items-center justify-between sm:justify-end gap-3 text-xs text-zinc-600">
+              <div className="font-mono">
+                Showing <strong className="text-zinc-900">{totalBatchStudents === 0 ? 0 : startIndex + 1}–{endIndex}</strong> of{' '}
+                <strong className="text-zinc-900">{totalBatchStudents.toLocaleString()}</strong>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <span className="text-zinc-400 text-[11px]">Rows:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="px-2 py-1 text-xs border border-zinc-300 rounded bg-white font-mono focus:outline-none focus:ring-1 focus:ring-zinc-900"
+                >
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
           {/* Students Evaluation Table */}
-          {batchStudents.length === 0 ? (
+          {filteredBatchStudents.length === 0 ? (
             <div className="py-12 text-center text-xs text-zinc-400 border border-dashed border-zinc-200 rounded">
-              No students have been assigned to this batch by the student coordinator yet.
+              {batchStudents.length === 0
+                ? 'No students have been assigned to this batch by the student coordinator yet.'
+                : 'No students matched your search and decision filters.'}
             </div>
           ) : (
             <div className="border border-zinc-200 rounded overflow-x-auto">
@@ -410,7 +526,7 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200">
-                  {batchStudents.map((bs) => {
+                  {paginatedBatchStudents.map((bs) => {
                     const s = studentMap.get(bs.studentId);
                     const currentAction = getStudentAction(bs.studentId);
                     const finalResult = resultMap.get(bs.studentId);
@@ -471,6 +587,119 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Pagination Footer Controls */}
+          {totalPages > 1 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1 text-xs text-zinc-700">
+              <div className="font-mono text-zinc-500">
+                Page <strong className="text-zinc-900">{safePage}</strong> of{' '}
+                <strong className="text-zinc-900">{totalPages}</strong>
+              </div>
+
+              <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                {/* First Page */}
+                <button
+                  type="button"
+                  disabled={safePage <= 1}
+                  onClick={() => handlePageChange(1)}
+                  className="p-1.5 rounded border border-zinc-300 bg-white hover:bg-zinc-50 disabled:opacity-40 disabled:hover:bg-white text-zinc-700 transition-colors"
+                  title="First Page"
+                >
+                  <ChevronsLeft className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Prev Page */}
+                <button
+                  type="button"
+                  disabled={safePage <= 1}
+                  onClick={() => handlePageChange(safePage - 1)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-zinc-300 bg-white hover:bg-zinc-50 disabled:opacity-40 disabled:hover:bg-white text-zinc-700 transition-colors"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Prev</span>
+                </button>
+
+                {/* Numeric Page Buttons */}
+                {(() => {
+                  const pages: (number | string)[] = [];
+                  if (totalPages <= 7) {
+                    for (let i = 1; i <= totalPages; i++) pages.push(i);
+                  } else {
+                    pages.push(1);
+                    if (safePage > 3) pages.push('...');
+                    const start = Math.max(2, safePage - 1);
+                    const end = Math.min(totalPages - 1, safePage + 1);
+                    for (let i = start; i <= end; i++) {
+                      pages.push(i);
+                    }
+                    if (safePage < totalPages - 2) pages.push('...');
+                    pages.push(totalPages);
+                  }
+
+                  return pages.map((p, idx) => {
+                    if (typeof p === 'string') {
+                      return (
+                        <span key={`dots-${idx}`} className="px-1 text-zinc-400 font-mono">
+                          ...
+                        </span>
+                      );
+                    }
+                    const isActive = p === safePage;
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => handlePageChange(p)}
+                        className={`min-w-7 h-7 px-2 font-mono text-xs rounded border transition-colors ${
+                          isActive
+                            ? 'bg-zinc-950 text-white border-zinc-950 font-bold'
+                            : 'bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-50'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    );
+                  });
+                })()}
+
+                {/* Next Page */}
+                <button
+                  type="button"
+                  disabled={safePage >= totalPages}
+                  onClick={() => handlePageChange(safePage + 1)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-zinc-300 bg-white hover:bg-zinc-50 disabled:opacity-40 disabled:hover:bg-white text-zinc-700 transition-colors"
+                >
+                  <span>Next</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Last Page */}
+                <button
+                  type="button"
+                  disabled={safePage >= totalPages}
+                  onClick={() => handlePageChange(totalPages)}
+                  className="p-1.5 rounded border border-zinc-300 bg-white hover:bg-zinc-50 disabled:opacity-40 disabled:hover:bg-white text-zinc-700 transition-colors"
+                  title="Last Page"
+                >
+                  <ChevronsRight className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Direct Jump Input */}
+                <form onSubmit={handleJumpSubmit} className="flex items-center gap-1 pl-2 ml-1 border-l border-zinc-200">
+                  <span className="text-[11px] text-zinc-500">Go:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={totalPages}
+                    value={jumpPageInput}
+                    onChange={(e) => setJumpPageInput(e.target.value)}
+                    placeholder={`${safePage}`}
+                    className="w-12 px-1.5 py-1 text-xs font-mono text-center border border-zinc-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-zinc-900"
+                  />
+                </form>
+              </div>
             </div>
           )}
         </div>

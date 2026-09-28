@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { User, Drive, DriveRound, Batch, BatchStudent, Student, RoundCandidate } from '../../types';
 import { ironStorage } from '../../services/storage';
 import { StatusBadge } from '../common/StatusBadge';
@@ -17,6 +17,10 @@ import {
   CheckSquare,
   Square,
   Lock,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from 'lucide-react';
 
 interface CoordinatorViewProps {
@@ -128,6 +132,57 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
   // Current batch students
   const currentBatchStudents = activeBatch ? ironStorage.getBatchStudents(activeBatch.id) : [];
 
+  // Batch Students Pagination & Filter State
+  const [batchSearchTerm, setBatchSearchTerm] = useState('');
+  const [batchCurrentPage, setBatchCurrentPage] = useState(1);
+  const [batchPageSize, setBatchPageSize] = useState(50);
+  const [batchJumpPageInput, setBatchJumpPageInput] = useState('');
+
+  // Reset page when active batch, search term, or page size changes
+  useEffect(() => {
+    setBatchCurrentPage(1);
+  }, [activeBatchId, batchSearchTerm, batchPageSize]);
+
+  // Filtered batch students
+  const filteredBatchStudents = useMemo(() => {
+    const clean = batchSearchTerm.trim().toLowerCase();
+    return currentBatchStudents.filter((bs) => {
+      const s = studentMap.get(bs.studentId);
+      if (!s) return false;
+      if (!clean) return true;
+      return (
+        s.fullName.toLowerCase().includes(clean) ||
+        s.rollNumber.toLowerCase().includes(clean) ||
+        s.branch.toLowerCase().includes(clean) ||
+        (s.department && s.department.toLowerCase().includes(clean))
+      );
+    });
+  }, [currentBatchStudents, studentMap, batchSearchTerm]);
+
+  const totalBatchStudents = filteredBatchStudents.length;
+  const totalBatchPages = Math.max(1, Math.ceil(totalBatchStudents / batchPageSize));
+  const safeBatchPage = Math.min(Math.max(1, batchCurrentPage), totalBatchPages);
+  const batchStartIndex = (safeBatchPage - 1) * batchPageSize;
+  const batchEndIndex = Math.min(batchStartIndex + batchPageSize, totalBatchStudents);
+
+  const paginatedBatchStudents = useMemo(() => {
+    return filteredBatchStudents.slice(batchStartIndex, batchEndIndex);
+  }, [filteredBatchStudents, batchStartIndex, batchEndIndex]);
+
+  const handleBatchPageChange = (newPage: number) => {
+    const target = Math.min(Math.max(1, newPage), totalBatchPages);
+    setBatchCurrentPage(target);
+  };
+
+  const handleBatchJumpSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsed = parseInt(batchJumpPageInput, 10);
+    if (!isNaN(parsed) && parsed >= 1 && parsed <= totalBatchPages) {
+      setBatchCurrentPage(parsed);
+      setBatchJumpPageInput('');
+    }
+  };
+
   const handleCreateBatch = (e: React.FormEvent) => {
     e.preventDefault();
     setBatchError(null);
@@ -217,6 +272,24 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
 
   // Unassigned candidates in this round
   const unassignedInView = eligibleCandidatesForModal.filter((item) => !item.isAssigned);
+
+  // Modal Candidates Pagination
+  const [modalCurrentPage, setModalCurrentPage] = useState(1);
+  const [modalPageSize, setModalPageSize] = useState(50);
+
+  useEffect(() => {
+    setModalCurrentPage(1);
+  }, [assignSearch, isAssignOpen, modalPageSize]);
+
+  const totalModalCandidates = eligibleCandidatesForModal.length;
+  const totalModalPages = Math.max(1, Math.ceil(totalModalCandidates / modalPageSize));
+  const safeModalPage = Math.min(Math.max(1, modalCurrentPage), totalModalPages);
+  const modalStartIndex = (safeModalPage - 1) * modalPageSize;
+  const modalEndIndex = Math.min(modalStartIndex + modalPageSize, totalModalCandidates);
+
+  const paginatedModalCandidates = useMemo(() => {
+    return eligibleCandidatesForModal.slice(modalStartIndex, modalEndIndex);
+  }, [eligibleCandidatesForModal, modalStartIndex, modalEndIndex]);
 
   const handleSelectAll = () => {
     if (selectedStudentIds.size === unassignedInView.length && unassignedInView.length > 0) {
@@ -524,26 +597,54 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
                 );
               })()}
 
-              {/* Assigned Students Table */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-zinc-900">
-                    Allocated Students ({currentBatchStudents.length})
-                  </span>
-                  {activeBatch.status === 'SUBMITTED' && (
-                    <span className="text-[11px] text-zinc-500 font-mono">
-                      Colors: Green = Selected · Orange = Hold · Red = Rejected
-                    </span>
-                  )}
+              {/* Assigned Students Table with Pagination & Search */}
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-zinc-50 p-2.5 rounded-lg border border-zinc-200">
+                  <div className="flex items-center gap-2 w-full sm:w-64">
+                    <div className="relative w-full">
+                      <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none text-zinc-400">
+                        <Search className="w-3.5 h-3.5" />
+                      </span>
+                      <input
+                        type="text"
+                        placeholder="Search allocated students..."
+                        value={batchSearchTerm}
+                        onChange={(e) => setBatchSearchTerm(e.target.value)}
+                        className="w-full pl-8 pr-3 py-1 text-xs border border-zinc-300 rounded focus:outline-none focus:ring-1 focus:ring-zinc-900 bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between sm:justify-end gap-3 text-xs text-zinc-600">
+                    <div className="font-mono text-[11px]">
+                      Showing <strong className="text-zinc-900">{totalBatchStudents === 0 ? 0 : batchStartIndex + 1}–{batchEndIndex}</strong> of{' '}
+                      <strong className="text-zinc-900">{totalBatchStudents.toLocaleString()}</strong>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <span className="text-zinc-400 text-[10px]">Rows:</span>
+                      <select
+                        value={batchPageSize}
+                        onChange={(e) => setBatchPageSize(Number(e.target.value))}
+                        className="px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white font-mono focus:outline-none focus:ring-1 focus:ring-zinc-900"
+                      >
+                        <option value={25}>25</option>
+                        <option value={50}>50</option>
+                        <option value={100}>100</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
 
-                {currentBatchStudents.length === 0 ? (
+                {filteredBatchStudents.length === 0 ? (
                   <div className="py-8 text-center text-xs text-zinc-400 border border-dashed border-zinc-200 rounded">
-                    No students currently assigned to this batch. Click "Assign Students" to add candidates.
+                    {currentBatchStudents.length === 0
+                      ? 'No students currently assigned to this batch. Click "Assign Students" to add candidates.'
+                      : 'No allocated students matched your search criteria.'}
                   </div>
                 ) : (
                   <div className="border border-zinc-200 rounded overflow-x-auto">
-          <table className="w-full text-left text-xs min-w-[800px]">
+                    <table className="w-full text-left text-xs min-w-[800px]">
                       <thead className="bg-zinc-50 border-b border-zinc-200 text-zinc-600 font-semibold uppercase tracking-wider text-[11px]">
                         <tr>
                           <th className="py-2.5 px-3">Roll Number</th>
@@ -556,15 +657,11 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-200">
-                        {currentBatchStudents.map((bs) => {
+                        {paginatedBatchStudents.map((bs) => {
                           const s = studentMap.get(bs.studentId);
                           const isSubmitted = activeBatch.status === 'SUBMITTED';
                           const outcome = isSubmitted ? getStudentOutcome(activeBatch.id, bs.studentId) : null;
 
-                          // Color classes based on outcome:
-                          // Selected: Green
-                          // Hold: Orange
-                          // Rejected: Red
                           let rowClass = 'hover:bg-zinc-50/50';
                           if (isSubmitted) {
                             if (outcome === 'SELECTED') {
@@ -621,6 +718,113 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
                         })}
                       </tbody>
                     </table>
+                  </div>
+                )}
+
+                {/* Batch Table Pagination Controls */}
+                {totalBatchPages > 1 && (
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 text-xs text-zinc-700">
+                    <div className="font-mono text-zinc-500">
+                      Page <strong className="text-zinc-900">{safeBatchPage}</strong> of{' '}
+                      <strong className="text-zinc-900">{totalBatchPages}</strong>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                      <button
+                        type="button"
+                        disabled={safeBatchPage <= 1}
+                        onClick={() => handleBatchPageChange(1)}
+                        className="p-1 rounded border border-zinc-300 bg-white hover:bg-zinc-50 disabled:opacity-40 disabled:hover:bg-white text-zinc-700 transition-colors"
+                        title="First Page"
+                      >
+                        <ChevronsLeft className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={safeBatchPage <= 1}
+                        onClick={() => handleBatchPageChange(safeBatchPage - 1)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-zinc-300 bg-white hover:bg-zinc-50 disabled:opacity-40 disabled:hover:bg-white text-zinc-700 transition-colors"
+                      >
+                        <ChevronLeft className="w-3.5 h-3.5" />
+                        <span>Prev</span>
+                      </button>
+
+                      {(() => {
+                        const pages: (number | string)[] = [];
+                        if (totalBatchPages <= 7) {
+                          for (let i = 1; i <= totalBatchPages; i++) pages.push(i);
+                        } else {
+                          pages.push(1);
+                          if (safeBatchPage > 3) pages.push('...');
+                          const start = Math.max(2, safeBatchPage - 1);
+                          const end = Math.min(totalBatchPages - 1, safeBatchPage + 1);
+                          for (let i = start; i <= end; i++) {
+                            pages.push(i);
+                          }
+                          if (safeBatchPage < totalBatchPages - 2) pages.push('...');
+                          pages.push(totalBatchPages);
+                        }
+
+                        return pages.map((p, idx) => {
+                          if (typeof p === 'string') {
+                            return (
+                              <span key={`dots-${idx}`} className="px-1 text-zinc-400 font-mono">
+                                ...
+                              </span>
+                            );
+                          }
+                          const isActive = p === safeBatchPage;
+                          return (
+                            <button
+                              key={p}
+                              type="button"
+                              onClick={() => handleBatchPageChange(p)}
+                              className={`min-w-6 h-6 px-1.5 font-mono text-xs rounded border transition-colors ${
+                                isActive
+                                  ? 'bg-zinc-950 text-white border-zinc-950 font-bold'
+                                  : 'bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-50'
+                              }`}
+                            >
+                              {p}
+                            </button>
+                          );
+                        });
+                      })()}
+
+                      <button
+                        type="button"
+                        disabled={safeBatchPage >= totalBatchPages}
+                        onClick={() => handleBatchPageChange(safeBatchPage + 1)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-zinc-300 bg-white hover:bg-zinc-50 disabled:opacity-40 disabled:hover:bg-white text-zinc-700 transition-colors"
+                      >
+                        <span>Next</span>
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={safeBatchPage >= totalBatchPages}
+                        onClick={() => handleBatchPageChange(totalBatchPages)}
+                        className="p-1 rounded border border-zinc-300 bg-white hover:bg-zinc-50 disabled:opacity-40 disabled:hover:bg-white text-zinc-700 transition-colors"
+                        title="Last Page"
+                      >
+                        <ChevronsRight className="w-3.5 h-3.5" />
+                      </button>
+
+                      <form onSubmit={handleBatchJumpSubmit} className="flex items-center gap-1 pl-2 ml-1 border-l border-zinc-200">
+                        <span className="text-[10px] text-zinc-500">Go:</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={totalBatchPages}
+                          value={batchJumpPageInput}
+                          onChange={(e) => setBatchJumpPageInput(e.target.value)}
+                          placeholder={`${safeBatchPage}`}
+                          className="w-10 px-1 py-0.5 text-xs font-mono text-center border border-zinc-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-zinc-900"
+                        />
+                      </form>
+                    </div>
                   </div>
                 )}
               </div>
@@ -788,7 +992,7 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
                 No eligible candidates found for this round.
               </div>
             ) : (
-              eligibleCandidatesForModal.map(({ candidate, student, isAssigned }) => {
+              paginatedModalCandidates.map(({ candidate, student, isAssigned }) => {
                 const isSelected = selectedStudentIds.has(student!.id);
                 return (
                   <div
@@ -847,6 +1051,36 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
               })
             )}
           </div>
+
+          {/* Modal Candidate Pagination Controls */}
+          {totalModalPages > 1 && (
+            <div className="flex items-center justify-between pt-1 text-xs text-zinc-600 font-mono">
+              <div>
+                Showing {modalStartIndex + 1}–{modalEndIndex} of {totalModalCandidates} candidates
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={safeModalPage <= 1}
+                  onClick={() => setModalCurrentPage((p) => Math.max(1, p - 1))}
+                  className="px-2 py-1 border border-zinc-300 rounded bg-white hover:bg-zinc-50 disabled:opacity-40"
+                >
+                  Prev
+                </button>
+                <span className="px-2 text-zinc-900 font-bold">
+                  {safeModalPage} / {totalModalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={safeModalPage >= totalModalPages}
+                  onClick={() => setModalCurrentPage((p) => Math.min(totalModalPages, p + 1))}
+                  className="px-2 py-1 border border-zinc-300 rounded bg-white hover:bg-zinc-50 disabled:opacity-40"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Action Footer */}
           <div className="flex items-center justify-between pt-3 border-t border-zinc-200">
