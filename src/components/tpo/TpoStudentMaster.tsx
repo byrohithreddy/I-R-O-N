@@ -359,10 +359,9 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
               <option value="ALL">All Branches ({branchCounts.ALL || 0})</option>
               <option value="CSE">CSE ({branchCounts.CSE || 0})</option>
               <option value="CSE-DS">CSE-DS ({branchCounts['CSE-DS'] || 0})</option>
-              <option value="CSE-AIML">CSE-AIML ({branchCounts['CSE-AIML'] || 0})</option>
+              <option value="CSE AIML">CSE AIML ({branchCounts['CSE AIML'] || 0})</option>
               <option value="CSE-CS">CSE-CS ({branchCounts['CSE-CS'] || 0})</option>
-              <option value="CSE-IOT">CSE-IOT ({branchCounts['CSE-IOT'] || 0})</option>
-              <option value="IT">IT ({branchCounts.IT || 0})</option>
+              <option value="CSIT">CSIT ({branchCounts.CSIT || 0})</option>
               <option value="ECE">ECE ({branchCounts.ECE || 0})</option>
               <option value="EEE">EEE ({branchCounts.EEE || 0})</option>
               <option value="MECH">MECH ({branchCounts.MECH || 0})</option>
@@ -644,10 +643,9 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
                   const deptMap: Record<string, string> = {
                     CSE: 'Computer Science & Engineering',
                     'CSE-DS': 'CSE (Data Science)',
-                    'CSE-AIML': 'CSE (AI & Machine Learning)',
+                    'CSE AIML': 'CSE (AI & Machine Learning)',
                     'CSE-CS': 'CSE (Cyber Security)',
-                    'CSE-IOT': 'CSE (Internet of Things)',
-                    IT: 'Information Technology',
+                    CSIT: 'Computer Science & Information Technology',
                     ECE: 'Electronics & Communication',
                     EEE: 'Electrical & Electronics',
                     MECH: 'Mechanical Engineering',
@@ -660,10 +658,9 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
               >
                 <option value="CSE">CSE</option>
                 <option value="CSE-DS">CSE-DS (Data Science)</option>
-                <option value="CSE-AIML">CSE-AIML (AI & ML)</option>
+                <option value="CSE AIML">CSE AIML (AI & ML)</option>
                 <option value="CSE-CS">CSE-CS (Cyber Security)</option>
-                <option value="CSE-IOT">CSE-IOT (Internet of Things)</option>
-                <option value="IT">IT</option>
+                <option value="CSIT">CSIT</option>
                 <option value="ECE">ECE</option>
                 <option value="EEE">EEE</option>
                 <option value="MECH">MECH</option>

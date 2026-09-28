@@ -158,8 +158,8 @@ export async function initializeDatabase(db: IronDatabase): Promise<void> {
       'Bhat', 'Hegde', 'Gowda', 'Shetty', 'Pawar', 'Yadav', 'Trivedi', 'Mehta', 'Shah', 'Aggarwal'
     ];
 
-    const branches = ['CSE', 'IT', 'ECE', 'EEE', 'MECH', 'CIVIL'];
-    const branchWeights = [0.35, 0.25, 0.20, 0.10, 0.05, 0.05]; // Realistic distribution
+    const branches = ['CSE', 'CSE-DS', 'CSE AIML', 'CSE-CS', 'CSIT', 'ECE', 'EEE', 'MECH', 'CIVIL'];
+    const branchWeights = [0.30, 0.15, 0.15, 0.10, 0.15, 0.08, 0.04, 0.02, 0.01]; // Realistic distribution
 
     function pickBranch(): string {
       const r = Math.random();
@@ -227,7 +227,7 @@ export async function initializeDatabase(db: IronDatabase): Promise<void> {
         eligibilityCriteria: 'Minimum 8.0 CGPA, strictly 0 active backlogs.',
         minimumCgpa: 8.0,
         backlogRule: 0,
-        eligibleBranches: JSON.stringify(['CSE', 'IT', 'ECE']),
+        eligibleBranches: JSON.stringify(['CSE', 'CSIT', 'ECE']),
         driveDate: '2026-10-15',
         driveTime: '09:00',
         location: 'Campus Main Auditorium & Lab 4',
@@ -248,7 +248,7 @@ export async function initializeDatabase(db: IronDatabase): Promise<void> {
         eligibilityCriteria: 'Minimum 7.0 CGPA, maximum 1 backlog allowed.',
         minimumCgpa: 7.0,
         backlogRule: 1,
-        eligibleBranches: JSON.stringify(['CSE', 'IT', 'ECE', 'EEE']),
+        eligibleBranches: JSON.stringify(['CSE', 'CSIT', 'ECE', 'EEE']),
         driveDate: '2026-10-25',
         driveTime: '08:30',
         location: 'Convention Hall & Online Testing Lab',
@@ -269,7 +269,7 @@ export async function initializeDatabase(db: IronDatabase): Promise<void> {
         eligibilityCriteria: 'Minimum 8.5 CGPA, strictly 0 active backlogs.',
         minimumCgpa: 8.5,
         backlogRule: 0,
-        eligibleBranches: JSON.stringify(['CSE', 'IT']),
+        eligibleBranches: JSON.stringify(['CSE', 'CSIT']),
         driveDate: '2026-11-02',
         driveTime: '10:00',
         location: 'Seminar Hall 1',

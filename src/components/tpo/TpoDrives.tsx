@@ -39,7 +39,7 @@ interface TpoDrivesProps {
   onRefresh: () => void;
 }
 
-const ALL_BRANCHES = ['CSE', 'CSE-DS', 'CSE-AIML', 'CSE-CS', 'CSE-IOT', 'IT', 'ECE', 'EEE', 'MECH', 'CIVIL', 'MBA'];
+const ALL_BRANCHES = ['CSE', 'CSE-DS', 'CSE AIML', 'CSE-CS', 'CSIT', 'ECE', 'EEE', 'MECH', 'CIVIL', 'MBA'];
 
 export const TpoDrives: React.FC<TpoDrivesProps> = ({
   initialDriveId,
@@ -75,7 +75,7 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
   const [jobDescription, setJobDescription] = useState('');
   const [minimumCgpa, setMinimumCgpa] = useState<number>(7.0);
   const [backlogRule, setBacklogRule] = useState<number | string>(0);
-  const [eligibleBranches, setEligibleBranches] = useState<string[]>(['CSE', 'CSE-DS', 'CSE-AIML', 'IT', 'ECE']);
+  const [eligibleBranches, setEligibleBranches] = useState<string[]>(['CSE', 'CSE-DS', 'CSE AIML', 'CSIT', 'ECE']);
   const [eligibilityCriteria, setEligibilityCriteria] = useState('');
   const [driveDate, setDriveDate] = useState('2026-11-05');
   const [driveTime, setDriveTime] = useState('09:30');
@@ -127,7 +127,7 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
     setJobDescription('');
     setMinimumCgpa(7.0);
     setBacklogRule(0);
-    setEligibleBranches(['CSE', 'IT', 'ECE']);
+    setEligibleBranches(['CSE', 'CSIT', 'ECE']);
     setEligibilityCriteria('Minimum 7.0 CGPA with no standing backlogs.');
     setDriveDate('2026-11-05');
     setDriveTime('09:30');

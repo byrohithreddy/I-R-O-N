@@ -658,7 +658,7 @@ apiRouter.get('/drives', async (req: Request, res: Response) => {
       try {
         branches = JSON.parse(d.eligible_branches);
       } catch {
-        branches = ['CSE', 'IT', 'ECE'];
+        branches = ['CSE', 'CSIT', 'ECE'];
       }
 
       const companySlug = (d.company_name || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -723,7 +723,7 @@ apiRouter.get('/drives/:id', async (req: Request, res: Response) => {
     try {
       branches = JSON.parse(d.eligible_branches);
     } catch {
-      branches = ['CSE', 'IT', 'ECE'];
+      branches = ['CSE', 'CSIT', 'ECE'];
     }
 
     const companySlug = (d.company_name || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -825,7 +825,7 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
         d.eligibilityCriteria || '',
         Number(d.minimumCgpa) || 7.0,
         Number(d.backlogRule) || 0,
-        JSON.stringify(d.eligibleBranches || ['CSE', 'IT', 'ECE']),
+        JSON.stringify(d.eligibleBranches || ['CSE', 'CSIT', 'ECE']),
         driveDate,
         d.driveTime || '09:00',
         d.location || 'Campus Auditorium',
@@ -1228,7 +1228,7 @@ apiRouter.post('/applications/apply', async (req: Request, res: Response) => {
     try {
       branches = JSON.parse(row.eligible_branches);
     } catch {
-      branches = ['CSE', 'IT', 'ECE'];
+      branches = ['CSE', 'CSIT', 'ECE'];
     }
 
     const isBranchEligible = branches.some((b: string) => b.trim().toUpperCase() === (row.student_branch || '').trim().toUpperCase());
