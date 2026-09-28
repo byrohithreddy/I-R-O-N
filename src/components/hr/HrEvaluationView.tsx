@@ -111,7 +111,7 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
       if (!s) return false;
       const matchesSearch =
         !clean ||
-        s.fullName.toLowerCase().includes(clean) ||
+        (s.fullName || '').toLowerCase().includes(clean) ||
         s.rollNumber.toLowerCase().includes(clean) ||
         s.branch.toLowerCase().includes(clean) ||
         (s.department && s.department.toLowerCase().includes(clean));

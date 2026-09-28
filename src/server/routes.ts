@@ -489,8 +489,8 @@ apiRouter.post('/students', authMiddleware, roleMiddleware(['TPO']), async (req:
     const s = req.body;
     const cleanRoll = (s.rollNumber || '').trim().toUpperCase();
 
-    if (!cleanRoll || !s.fullName) {
-      return res.status(400).json({ error: 'Roll number and full name are required' });
+    if (!cleanRoll) {
+      return res.status(400).json({ error: 'Roll number is required' });
     }
 
     const existing = await db
@@ -512,11 +512,11 @@ apiRouter.post('/students', authMiddleware, roleMiddleware(['TPO']), async (req:
       .bind(
         id,
         cleanRoll,
-        s.fullName,
+        s.fullName !== undefined ? s.fullName : null,
         s.email || `${cleanRoll.toLowerCase()}@college.edu`,
         s.phone || '',
         s.branch || 'CSE',
-        s.cgpa || 7.0,
+        s.cgpa !== undefined && s.cgpa !== null && s.cgpa !== '' ? Number(s.cgpa) : 0,
         s.activeBacklogs || 0,
         s.historyOfBacklogs || 0,
         s.gender || 'MALE'
@@ -614,11 +614,11 @@ apiRouter.post('/students/bulk-import', authMiddleware, roleMiddleware(['TPO']),
         .bind(
           id,
           cleanRoll,
-          s.fullName || s.full_name || 'Student',
+          s.fullName !== undefined ? s.fullName : (s.full_name !== undefined ? s.full_name : null),
           s.email || `${cleanRoll.toLowerCase()}@college.edu`,
           s.phone || '',
           s.branch || 'CSE',
-          Number(s.cgpa) || 7.0,
+          s.cgpa !== undefined && s.cgpa !== null && s.cgpa !== '' ? Number(s.cgpa) : 0,
           Number(s.activeBacklogs || s.active_backlogs) || 0,
           Number(s.historyOfBacklogs || s.history_of_backlogs) || 0,
           s.gender || 'MALE'

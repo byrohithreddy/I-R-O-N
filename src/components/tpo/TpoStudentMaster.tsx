@@ -90,7 +90,7 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
     return students.filter((s) => {
       const matchesSearch =
         !cleanSearch ||
-        s.fullName.toLowerCase().includes(cleanSearch) ||
+        (s.fullName || '').toLowerCase().includes(cleanSearch) ||
         s.rollNumber.toLowerCase().includes(cleanSearch) ||
         s.email.toLowerCase().includes(cleanSearch);
       const matchesBranch = branchFilter === 'ALL' || s.branch === branchFilter;
@@ -159,17 +159,22 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
     e.preventDefault();
     setFormError(null);
 
-    if (!formData.rollNumber || !formData.fullName) {
-      setFormError('Roll number and full name are required.');
+    if (!formData.rollNumber) {
+      setFormError('Roll number is required.');
       return;
     }
 
     try {
+      const payload = {
+        ...formData,
+        fullName: formData.fullName?.trim() ? formData.fullName.trim() : null,
+        cgpa: formData.cgpa !== undefined && formData.cgpa !== null ? Number(formData.cgpa) : 0,
+      };
       if (editingStudent) {
-        ironStorage.saveStudent(formData as any, editingStudent.id);
+        ironStorage.saveStudent(payload as any, editingStudent.id);
         setIsEditOpen(false);
       } else {
-        ironStorage.saveStudent(formData as any);
+        ironStorage.saveStudent(payload as any);
         setIsAddOpen(false);
       }
       onRefresh();
@@ -227,8 +232,8 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
       // Expected: Roll, Name, Email, Phone, College, Branch, Department, AcademicYear, CGPA, Backlogs
       const [roll, name, email, phone, college, branch, department, year, cgpaStr, backlogsStr] = cols;
 
-      if (!roll || !name) {
-        invalid.push({ row: i + 1, reason: 'Missing Roll Number or Name' });
+      if (!roll) {
+        invalid.push({ row: i + 1, reason: 'Missing Roll Number' });
         continue;
       }
 
@@ -238,30 +243,29 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
         continue;
       }
 
-      const cgpa = parseFloat(cgpaStr);
+      // If name is missing or 'NULL', keep Name as NULL
+      const finalName = !name || name.trim().toUpperCase() === 'NULL' ? null : name.trim();
+
+      // If no CGPA or invalid, consider CGPA as 0
+      let cgpa = parseFloat(cgpaStr);
       if (isNaN(cgpa) || cgpa < 0 || cgpa > 10) {
-        invalid.push({ row: i + 1, reason: `Invalid CGPA value: ${cgpaStr}` });
-        continue;
+        cgpa = 0.0;
       }
 
       const backlogs = parseInt(backlogsStr) || 0;
-      if (backlogs < 0) {
-        invalid.push({ row: i + 1, reason: `Invalid backlogs value: ${backlogsStr}` });
-        continue;
-      }
 
       existingRolls.add(cleanRoll);
 
       valid.push({
         id: `std_imp_${Date.now()}_${i}`,
         rollNumber: cleanRoll,
-        fullName: name,
+        fullName: finalName,
         email: email || `${cleanRoll.toLowerCase()}@college.edu`,
         phone: phone || '+91 90000 00000',
         college: college || 'Institute of Engineering & Technology',
         branch: branch || 'CSE',
         department: department || 'Engineering',
-        academicYear: year || '2022-2026',
+        academicYear: year || '2023-2027',
         cgpa,
         backlogCount: backlogs,
         isActive: true,
@@ -358,10 +362,11 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
             >
               <option value="ALL">All Branches ({branchCounts.ALL || 0})</option>
               <option value="CSE">CSE ({branchCounts.CSE || 0})</option>
-              <option value="CSE-DS">CSE-DS ({branchCounts['CSE-DS'] || 0})</option>
               <option value="CSE AIML">CSE AIML ({branchCounts['CSE AIML'] || 0})</option>
-              <option value="CSE-CS">CSE-CS ({branchCounts['CSE-CS'] || 0})</option>
+              <option value="AERO">AERO ({branchCounts.AERO || 0})</option>
               <option value="CSIT">CSIT ({branchCounts.CSIT || 0})</option>
+              <option value="CSE-DS">CSE-DS ({branchCounts['CSE-DS'] || 0})</option>
+              <option value="CSE-CS">CSE-CS ({branchCounts['CSE-CS'] || 0})</option>
               <option value="ECE">ECE ({branchCounts.ECE || 0})</option>
               <option value="EEE">EEE ({branchCounts.EEE || 0})</option>
               <option value="MECH">MECH ({branchCounts.MECH || 0})</option>
@@ -418,12 +423,18 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
               paginatedStudents.map((s) => (
                 <tr key={s.id} className="hover:bg-zinc-50/50">
                   <td className="py-2 px-3 font-mono font-medium text-zinc-950">{s.rollNumber}</td>
-                  <td className="py-2 px-3 font-medium text-zinc-900">{s.fullName}</td>
+                  <td className="py-2 px-3 font-medium text-zinc-900">
+                    {s.fullName ? (
+                      s.fullName
+                    ) : (
+                      <span className="text-zinc-400 italic font-mono text-xs bg-zinc-100 px-1.5 py-0.5 rounded">NULL</span>
+                    )}
+                  </td>
                   <td className="py-2 px-3 text-zinc-600">
                     {s.branch} <span className="text-zinc-400">·</span> {s.department}
                   </td>
                   <td className="py-2 px-3 font-mono text-zinc-600">{s.academicYear}</td>
-                  <td className="py-2 px-3 font-mono font-semibold text-zinc-950">{s.cgpa.toFixed(2)}</td>
+                  <td className="py-2 px-3 font-mono font-semibold text-zinc-950">{(s.cgpa ?? 0).toFixed(2)}</td>
                   <td className="py-2 px-3 font-mono">
                     {s.backlogCount > 0 ? (
                       <span className="text-rose-700 font-semibold">{s.backlogCount}</span>
@@ -646,6 +657,7 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
                     'CSE AIML': 'CSE (AI & Machine Learning)',
                     'CSE-CS': 'CSE (Cyber Security)',
                     CSIT: 'Computer Science & Information Technology',
+                    AERO: 'Aeronautical Engineering',
                     ECE: 'Electronics & Communication',
                     EEE: 'Electrical & Electronics',
                     MECH: 'Mechanical Engineering',
@@ -657,10 +669,11 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
                 className="w-full px-3 py-1.5 text-xs border border-zinc-300 rounded focus:outline-none focus:ring-1 focus:ring-zinc-900"
               >
                 <option value="CSE">CSE</option>
-                <option value="CSE-DS">CSE-DS (Data Science)</option>
                 <option value="CSE AIML">CSE AIML (AI & ML)</option>
-                <option value="CSE-CS">CSE-CS (Cyber Security)</option>
+                <option value="AERO">AERO (Aeronautical Engineering)</option>
                 <option value="CSIT">CSIT</option>
+                <option value="CSE-DS">CSE-DS (Data Science)</option>
+                <option value="CSE-CS">CSE-CS (Cyber Security)</option>
                 <option value="ECE">ECE</option>
                 <option value="EEE">EEE</option>
                 <option value="MECH">MECH</option>

@@ -151,7 +151,7 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
       if (!s) return false;
       if (!clean) return true;
       return (
-        s.fullName.toLowerCase().includes(clean) ||
+        (s.fullName || '').toLowerCase().includes(clean) ||
         s.rollNumber.toLowerCase().includes(clean) ||
         s.branch.toLowerCase().includes(clean) ||
         (s.department && s.department.toLowerCase().includes(clean))
@@ -264,9 +264,9 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
       if (!assignSearch.trim()) return true;
       const q = assignSearch.toLowerCase();
       return (
-        item.student!.fullName.toLowerCase().includes(q) ||
-        item.student!.rollNumber.toLowerCase().includes(q) ||
-        item.student!.branch.toLowerCase().includes(q)
+        (item.student?.fullName || '').toLowerCase().includes(q) ||
+        (item.student?.rollNumber || '').toLowerCase().includes(q) ||
+        (item.student?.branch || '').toLowerCase().includes(q)
       );
     });
 

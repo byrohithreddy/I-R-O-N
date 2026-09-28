@@ -890,11 +890,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           .bind(
             id,
             cleanRoll,
-            s.fullName || s.full_name || 'Student',
+            s.fullName !== undefined ? s.fullName : (s.full_name !== undefined ? s.full_name : null),
             s.email || `${cleanRoll.toLowerCase()}@college.edu`,
             s.phone || '',
             s.branch || 'CSE',
-            Number(s.cgpa) || 7.0,
+            s.cgpa !== undefined && s.cgpa !== null && s.cgpa !== '' ? Number(s.cgpa) : 0,
             Number(s.activeBacklogs || s.active_backlogs) || 0,
             Number(s.historyOfBacklogs || s.history_of_backlogs) || 0,
             s.gender || 'MALE'

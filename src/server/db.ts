@@ -136,78 +136,68 @@ export async function initializeDatabase(db: IronDatabase): Promise<void> {
       .run();
   }
 
-  // 2. Check and Seed 1,500 students if students table is empty or small
+  // 2. Check and Seed Student Master DB if students table is empty
   const studentCountRow = await db
     .prepare('SELECT COUNT(*) as count FROM students')
     .first<{ count: number }>();
 
   const currentCount = studentCountRow ? studentCountRow.count : 0;
 
-  if (currentCount < 1000) {
-    const firstNames = [
-      'Aarav', 'Vivaan', 'Aditya', 'Vihaan', 'Arjun', 'Sai', 'Reyansh', 'Ayaan', 'Krishna', 'Ishaan',
-      'Shaurya', 'Atharv', 'Abhimanyu', 'Advik', 'Pranav', 'Advaith', 'Kabir', 'Ananya', 'Diya', 'Gauri',
-      'Isha', 'Kavya', 'Khushi', 'Myra', 'Navya', 'Pooja', 'Priya', 'Riya', 'Saanvi', 'Tanvi',
-      'Vanya', 'Zoya', 'Rohith', 'Siddharth', 'Nikhil', 'Harsh', 'Varun', 'Tarun', 'Deepak', 'Manish',
-      'Sneha', 'Meera', 'Roshni', 'Aakash', 'Rohan', 'Kunal', 'Vikram', 'Anjali', 'Swati', 'Preeti'
-    ];
+  if (currentCount === 0) {
+    const studentsMasterPath = path.resolve(process.cwd(), 'src/data/studentsMaster.json');
+    if (fs.existsSync(studentsMasterPath)) {
+      try {
+        const fileData = fs.readFileSync(studentsMasterPath, 'utf8');
+        const studentsList = JSON.parse(fileData);
 
-    const lastNames = [
-      'Sharma', 'Verma', 'Reddy', 'Rao', 'Patel', 'Nair', 'Menon', 'Gupta', 'Singh', 'Kumar',
-      'Chowdhury', 'Iyer', 'Pillai', 'Bose', 'Das', 'Banerjee', 'Mishra', 'Joshi', 'Kulkarni', 'Deshmukh',
-      'Bhat', 'Hegde', 'Gowda', 'Shetty', 'Pawar', 'Yadav', 'Trivedi', 'Mehta', 'Shah', 'Aggarwal'
-    ];
-
-    const branches = ['CSE', 'CSE-DS', 'CSE AIML', 'CSE-CS', 'CSIT', 'ECE', 'EEE', 'MECH', 'CIVIL'];
-    const branchWeights = [0.30, 0.15, 0.15, 0.10, 0.15, 0.08, 0.04, 0.02, 0.01]; // Realistic distribution
-
-    function pickBranch(): string {
-      const r = Math.random();
-      let cumulative = 0;
-      for (let i = 0; i < branches.length; i++) {
-        cumulative += branchWeights[i];
-        if (r <= cumulative) return branches[i];
+        for (const s of studentsList) {
+          await db
+            .prepare(
+              `INSERT OR IGNORE INTO students
+               (id, roll_number, full_name, email, phone, branch, cgpa, active_backlogs, history_of_backlogs, gender, created_at, updated_at,
+                college, department, academic_year, dob, ssc_school, ssc_percentage, ssc_passout_year,
+                inter_college, inter_percentage, inter_passout_year, diploma_college, diploma_percentage, diploma_passout_year,
+                pan_card_no, aadhar_card_no, eamcet_rank, admission_type, father_name, father_mobile, permanent_address)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'),
+                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            )
+            .bind(
+              s.id,
+              s.rollNumber,
+              s.fullName !== 'NULL' ? s.fullName : null,
+              s.email,
+              s.phone,
+              s.branch,
+              s.cgpa ?? 0,
+              s.backlogCount ?? 0,
+              s.backlogCount ?? 0,
+              s.gender ?? 'MALE',
+              s.college || 'Institute of Engineering & Technology',
+              s.department || 'Engineering',
+              s.academicYear || '2023-2027',
+              s.dob || null,
+              s.sscSchool || null,
+              parseFloat(s.sscPercentage) || null,
+              s.sscPassoutYear || null,
+              s.interCollege || null,
+              parseFloat(s.interPercentage) || null,
+              s.interPassoutYear || null,
+              s.diplomaCollege || null,
+              parseFloat(s.diplomaPercentage) || null,
+              s.diplomaPassoutYear || null,
+              s.panCardNo || null,
+              s.aadharCardNo || null,
+              s.eamcetRank || null,
+              s.admissionType || null,
+              s.fatherName || null,
+              s.fatherMobile || null,
+              s.permanentAddress || null
+            )
+            .run();
+        }
+      } catch (err) {
+        console.error('Failed to seed students from studentsMaster.json:', err);
       }
-      return 'CSE';
-    }
-
-    // Seed up to 1,500 students
-    const needed = 1500 - currentCount;
-    for (let i = 1; i <= needed; i++) {
-      const num = (currentCount + i).toString().padStart(4, '0');
-      const rollNumber = `23BD1A${num}`;
-      const fName = firstNames[Math.floor(Math.random() * firstNames.length)];
-      const lName = lastNames[Math.floor(Math.random() * lastNames.length)];
-      const fullName = `${fName} ${lName}`;
-      const email = `${fName.toLowerCase()}.${lName.toLowerCase()}${num}@college.edu`;
-      const phone = `+91 ${9000000000 + Math.floor(Math.random() * 999999999)}`;
-      const branch = pickBranch();
-      // CGPA centered around 7.6 with normal distribution between 6.0 and 9.8
-      const cgpa = Number(Math.min(9.9, Math.max(6.0, 6.5 + Math.random() * 2.5 + Math.random() * 0.8)).toFixed(2));
-      const hasBacklogs = Math.random() < 0.12; // 12% have active backlogs
-      const activeBacklogs = hasBacklogs ? Math.floor(Math.random() * 3) + 1 : 0;
-      const historyOfBacklogs = activeBacklogs + (Math.random() < 0.15 ? Math.floor(Math.random() * 2) + 1 : 0);
-      const gender = Math.random() < 0.45 ? 'FEMALE' : 'MALE';
-
-      await db
-        .prepare(
-          `INSERT OR IGNORE INTO students
-           (id, roll_number, full_name, email, phone, branch, cgpa, active_backlogs, history_of_backlogs, gender, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
-        )
-        .bind(
-          `std_${num}`,
-          rollNumber,
-          fullName,
-          email,
-          phone,
-          branch,
-          cgpa,
-          activeBacklogs,
-          historyOfBacklogs,
-          gender
-        )
-        .run();
     }
   }
 
