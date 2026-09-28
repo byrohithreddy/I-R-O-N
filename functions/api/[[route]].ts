@@ -146,7 +146,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           fullName: s.full_name,
           email: s.email,
           phone: s.phone,
-          college: 'Institute of Engineering & Technology',
+          college: s.college || 'Institute of Engineering & Technology',
           branch: s.branch,
           department: s.branch === 'CSE' ? 'Computer Science & Engineering' : s.branch === 'ECE' ? 'Electronics & Communication' : s.branch === 'IT' ? 'Information Technology' : 'Engineering',
           academicYear: '2022-2026',
@@ -774,7 +774,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         phone: s.phone,
         branch: s.branch,
         department: s.branch,
-        academicYear: s.academic_year || '2022-2026',
+        academicYear: s.academic_year || '2023-2027',
         cgpa: s.cgpa,
         activeBacklogs: s.active_backlogs,
         historyOfBacklogs: s.history_of_backlogs,
@@ -870,45 +870,59 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       }
 
       let inserted = 0;
-      let duplicates = 0;
+      let updated = 0;
       let errors = 0;
 
       for (const s of rawStudents) {
         const cleanRoll = (s.rollNumber || s.roll_number || '').trim().toUpperCase();
-        if (!cleanRoll) {
+        if (!cleanRoll || !s.fullName) {
           errors++;
           continue;
         }
 
-        const existing = await env.DB.prepare('SELECT id FROM students WHERE UPPER(roll_number) = ?').bind(cleanRoll).first();
+        const existing = await env.DB.prepare(
+          'SELECT id FROM students WHERE UPPER(roll_number) = ?'
+        ).bind(cleanRoll).first<any>();
+
+        const values = [
+          s.fullName || s.full_name,
+          s.email || `${cleanRoll.toLowerCase()}@college.edu`,
+          s.phone ?? '',
+          s.college ?? 'Institute of Engineering & Technology',
+          s.branch ?? '',
+          s.department ?? s.branch ?? '',
+          s.academicYear ?? s.academic_year ?? '2023-2027',
+          Number(s.cgpa ?? 0),
+          Number(s.backlogCount ?? s.activeBacklogs ?? s.active_backlogs ?? 0),
+          Number(s.historyOfBacklogs ?? s.history_of_backlogs ?? 0),
+          s.gender ?? 'Other',
+        ];
+
         if (existing) {
-          duplicates++;
-          continue;
+          await env.DB.prepare(
+            `UPDATE students
+             SET roll_number = ?, full_name = ?, email = ?, phone = ?, college = ?, branch = ?,
+                 department = ?, academic_year = ?, cgpa = ?, active_backlogs = ?,
+                 history_of_backlogs = ?, gender = ?, updated_at = datetime('now')
+             WHERE id = ?`
+          ).bind(
+            cleanRoll, values[0], values[1], values[2], values[3], values[4],
+            values[5], values[6], values[7], values[8], values[9], values[10], existing.id
+          ).run();
+          updated++;
+        } else {
+          const id = s.id || `std_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+          await env.DB.prepare(
+            `INSERT INTO students
+             (id, roll_number, full_name, email, phone, college, branch, department, academic_year,
+              cgpa, active_backlogs, history_of_backlogs, gender, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+          ).bind(id, cleanRoll, ...values).run();
+          inserted++;
         }
-
-        const id = s.id || `std_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-        await env.DB.prepare(
-          `INSERT INTO students (id, roll_number, full_name, email, phone, branch, cgpa, active_backlogs, history_of_backlogs, gender, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
-        )
-          .bind(
-            id,
-            cleanRoll,
-            s.fullName || s.full_name || 'Student',
-            s.email || `${cleanRoll.toLowerCase()}@college.edu`,
-            s.phone || '',
-            s.branch || 'CSE',
-            Number(s.cgpa) || 7.0,
-            Number(s.backlogCount ?? s.activeBacklogs ?? s.active_backlogs ?? 0),
-            Number(s.historyOfBacklogs || s.history_of_backlogs) || 0,
-            s.gender || 'MALE'
-          )
-          .run();
-
-        inserted++;
       }
 
-      return jsonResponse({ total: rawStudents.length, inserted, duplicates, errors });
+      return jsonResponse({ total: rawStudents.length, inserted, updated, errors });
     }
 
     // 4. Placements: /api/placements
