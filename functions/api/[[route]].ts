@@ -802,7 +802,6 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         historyOfBacklogs: s.history_of_backlogs,
         backlogCount: s.active_backlogs,
         gender: s.gender,
-        college: 'Institute of Engineering & Technology',
         createdAt: s.created_at,
         updatedAt: s.updated_at,
       }));
