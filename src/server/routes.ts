@@ -619,7 +619,7 @@ apiRouter.post('/students/bulk-import', authMiddleware, roleMiddleware(['TPO']),
           s.phone || '',
           s.branch || 'CSE',
           Number(s.cgpa) || 7.0,
-          Number(s.activeBacklogs || s.active_backlogs) || 0,
+          Number(s.backlogCount ?? s.activeBacklogs ?? s.active_backlogs ?? 0),
           Number(s.historyOfBacklogs || s.history_of_backlogs) || 0,
           s.gender || 'MALE'
         )
