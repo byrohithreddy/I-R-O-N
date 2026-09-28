@@ -507,7 +507,7 @@ apiRouter.post('/students', authMiddleware, roleMiddleware(['TPO']), async (req:
     await db
       .prepare(
         `INSERT INTO students (id, roll_number, full_name, email, phone, branch, cgpa, active_backlogs, history_of_backlogs, gender, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
       )
       .bind(
         id,
@@ -515,9 +515,12 @@ apiRouter.post('/students', authMiddleware, roleMiddleware(['TPO']), async (req:
         s.fullName,
         s.email || `${cleanRoll.toLowerCase()}@college.edu`,
         s.phone || '',
+        s.college || 'Institute of Engineering & Technology',
         s.branch || 'CSE',
-        s.cgpa || 7.0,
-        s.activeBacklogs || 0,
+        s.department || s.branch || 'Engineering',
+        s.academicYear || s.academic_year || '2023-2027',
+        s.cgpa ?? 0,
+        s.activeBacklogs ?? s.active_backlogs ?? 0,
         s.historyOfBacklogs || 0,
         s.gender || 'MALE'
       )
@@ -540,7 +543,7 @@ apiRouter.put('/students/:id', authMiddleware, roleMiddleware(['TPO']), async (r
     await db
       .prepare(
         `UPDATE students
-         SET roll_number = ?, full_name = ?, email = ?, phone = ?, branch = ?, cgpa = ?, active_backlogs = ?, history_of_backlogs = ?, gender = ?, updated_at = datetime('now')
+         SET roll_number = ?, full_name = ?, email = ?, phone = ?, college = ?, branch = ?, department = ?, academic_year = ?, cgpa = ?, active_backlogs = ?, history_of_backlogs = ?, gender = ?, updated_at = datetime('now')
          WHERE id = ?`
       )
       .bind(
@@ -548,7 +551,10 @@ apiRouter.put('/students/:id', authMiddleware, roleMiddleware(['TPO']), async (r
         s.fullName,
         s.email,
         s.phone,
+        s.college,
         s.branch,
+        s.department,
+        s.academicYear,
         s.cgpa,
         s.activeBacklogs,
         s.historyOfBacklogs,
