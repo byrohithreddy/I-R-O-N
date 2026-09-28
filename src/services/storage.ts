@@ -18,7 +18,6 @@ import { api } from './api';
 
 const STORAGE_KEYS = {
   USERS: 'iron_users_v1',
-  STUDENTS: 'iron_students_v1',
   DRIVES: 'iron_drives_v1',
   ROUNDS: 'iron_rounds_v1',
   APPLICATIONS: 'iron_applications_v1',
@@ -31,169 +30,7 @@ const STORAGE_KEYS = {
   ARCHIVES: 'iron_archives_v1',
 };
 
-// Initial Seed Data: Permanent Student Master Database
-const INITIAL_STUDENTS: Student[] = [
-  {
-    id: 'std_01',
-    rollNumber: '22B81A0501',
-    fullName: 'Rohith Varma',
-    email: 'rohith.varma@college.edu',
-    phone: '+91 98480 12345',
-    college: 'Institute of Engineering & Technology',
-    branch: 'CSE',
-    department: 'Computer Science & Engineering',
-    academicYear: '2022-2026',
-    cgpa: 8.85,
-    backlogCount: 0,
-    isActive: true,
-    createdAt: '2025-08-01T10:00:00Z',
-    updatedAt: '2025-08-01T10:00:00Z',
-  },
-  {
-    id: 'std_02',
-    rollNumber: '22B81A0502',
-    fullName: 'Ananya Sharma',
-    email: 'ananya.s@college.edu',
-    phone: '+91 98480 23456',
-    college: 'Institute of Engineering & Technology',
-    branch: 'CSE',
-    department: 'Computer Science & Engineering',
-    academicYear: '2022-2026',
-    cgpa: 9.20,
-    backlogCount: 0,
-    isActive: true,
-    createdAt: '2025-08-01T10:00:00Z',
-    updatedAt: '2025-08-01T10:00:00Z',
-  },
-  {
-    id: 'std_03',
-    rollNumber: '22B81A0503',
-    fullName: 'Rahul Nambiar',
-    email: 'rahul.n@college.edu',
-    phone: '+91 98480 34567',
-    college: 'Institute of Engineering & Technology',
-    branch: 'ECE',
-    department: 'Electronics & Communication',
-    academicYear: '2022-2026',
-    cgpa: 7.95,
-    backlogCount: 0,
-    isActive: true,
-    createdAt: '2025-08-01T10:00:00Z',
-    updatedAt: '2025-08-01T10:00:00Z',
-  },
-  {
-    id: 'std_04',
-    rollNumber: '22B81A0504',
-    fullName: 'Sai Teja Reddy',
-    email: 'saiteja.r@college.edu',
-    phone: '+91 98480 45678',
-    college: 'Institute of Engineering & Technology',
-    branch: 'CSIT',
-    department: 'Computer Science & Information Technology',
-    academicYear: '2022-2026',
-    cgpa: 8.40,
-    backlogCount: 0,
-    isActive: true,
-    createdAt: '2025-08-01T10:00:00Z',
-    updatedAt: '2025-08-01T10:00:00Z',
-  },
-  {
-    id: 'std_05',
-    rollNumber: '22B81A0505',
-    fullName: 'Pooja Hegde',
-    email: 'pooja.h@college.edu',
-    phone: '+91 98480 56789',
-    college: 'Institute of Engineering & Technology',
-    branch: 'CSE',
-    department: 'Computer Science & Engineering',
-    academicYear: '2022-2026',
-    cgpa: 7.20,
-    backlogCount: 1,
-    isActive: true,
-    createdAt: '2025-08-01T10:00:00Z',
-    updatedAt: '2025-08-01T10:00:00Z',
-  },
-  {
-    id: 'std_06',
-    rollNumber: '22B81A0506',
-    fullName: 'Vikramaditya Rao',
-    email: 'vikram.rao@college.edu',
-    phone: '+91 98480 67890',
-    college: 'Institute of Engineering & Technology',
-    branch: 'MECH',
-    department: 'Mechanical Engineering',
-    academicYear: '2022-2026',
-    cgpa: 6.80,
-    backlogCount: 0,
-    isActive: true,
-    createdAt: '2025-08-01T10:00:00Z',
-    updatedAt: '2025-08-01T10:00:00Z',
-  },
-  {
-    id: 'std_07',
-    rollNumber: '22B81A0507',
-    fullName: 'Meera Iyer',
-    email: 'meera.iyer@college.edu',
-    phone: '+91 98480 78901',
-    college: 'Institute of Engineering & Technology',
-    branch: 'ECE',
-    department: 'Electronics & Communication',
-    academicYear: '2022-2026',
-    cgpa: 8.65,
-    backlogCount: 0,
-    isActive: true,
-    createdAt: '2025-08-01T10:00:00Z',
-    updatedAt: '2025-08-01T10:00:00Z',
-  },
-  {
-    id: 'std_08',
-    rollNumber: '22B81A0508',
-    fullName: 'Karthik Subramanian',
-    email: 'karthik.s@college.edu',
-    phone: '+91 98480 89012',
-    college: 'Institute of Engineering & Technology',
-    branch: 'EEE',
-    department: 'Electrical & Electronics',
-    academicYear: '2022-2026',
-    cgpa: 7.45,
-    backlogCount: 0,
-    isActive: true,
-    createdAt: '2025-08-01T10:00:00Z',
-    updatedAt: '2025-08-01T10:00:00Z',
-  },
-  {
-    id: 'std_09',
-    rollNumber: '22B81A0509',
-    fullName: 'Deepika Sen',
-    email: 'deepika.sen@college.edu',
-    phone: '+91 98480 90123',
-    college: 'Institute of Engineering & Technology',
-    branch: 'CSE',
-    department: 'Computer Science & Engineering',
-    academicYear: '2022-2026',
-    cgpa: 9.45,
-    backlogCount: 0,
-    isActive: true,
-    createdAt: '2025-08-01T10:00:00Z',
-    updatedAt: '2025-08-01T10:00:00Z',
-  },
-  {
-    id: 'std_10',
-    rollNumber: '22B81A0510',
-    fullName: 'Aditya Kulkarni',
-    email: 'aditya.k@college.edu',
-    phone: '+91 98480 01234',
-    college: 'Institute of Engineering & Technology',
-    branch: 'CSIT',
-    department: 'Computer Science & Information Technology',
-    academicYear: '2022-2026',
-    cgpa: 8.10,
-    backlogCount: 0,
-    isActive: true,
-    createdAt: '2025-08-01T10:00:00Z',
-    updatedAt: '2025-08-01T10:00:00Z',
-  },
-];
+// Student Master DB is backend-authoritative. Students are loaded from /api/sync and are never seeded in the browser.
 
 // Seed Drives with realistic schedules and rounds
 const INITIAL_DRIVES: Drive[] = [
@@ -778,6 +615,7 @@ class IronStorage {
   private syncListeners: Set<() => void> = new Set();
   private lastSyncFingerprint = '';
   private memoryCache: Map<string, any> = new Map();
+  private studentsCache: Student[] = [];
 
   private get<T>(key: string, defaultValue: T): T {
     if (this.memoryCache.has(key)) {
@@ -852,7 +690,9 @@ class IronStorage {
         this.lastSyncFingerprint = currentFingerprint;
 
         if (Array.isArray(data.students)) {
-          this.set(STORAGE_KEYS.STUDENTS, data.students.length > 0 ? data.students : this.getStudents());
+          // D1 is authoritative, including the valid empty state.
+          this.studentsCache = data.students;
+          this.notifyListeners();
         }
         if (Array.isArray(data.drives)) {
           // Merge drives while preserving recent local optimistic updates
@@ -920,8 +760,16 @@ class IronStorage {
   }
 
   public init(forceReset = false): void {
-    if (forceReset || !localStorage.getItem(STORAGE_KEYS.STUDENTS)) {
-      this.set(STORAGE_KEYS.STUDENTS, INITIAL_STUDENTS);
+    // Student Master DB is authoritative in the backend. Never seed or restore
+    // student records from browser storage, including stale data from older builds.
+    this.memoryCache.delete('iron_students_v1');
+    try {
+      localStorage.removeItem('iron_students_v1');
+    } catch {}
+
+    // Keep the existing local/demo initialization for non-student entities.
+    // Backend sync will replace these with the authoritative server state.
+    if (forceReset || !localStorage.getItem(STORAGE_KEYS.DRIVES)) {
       this.set(STORAGE_KEYS.DRIVES, INITIAL_DRIVES);
       this.set(STORAGE_KEYS.ROUNDS, INITIAL_ROUNDS);
       this.set(STORAGE_KEYS.APPLICATIONS, INITIAL_APPLICATIONS);
@@ -937,30 +785,29 @@ class IronStorage {
 
   // --- STUDENTS (Student Master DB) ---
   public getStudents(): Student[] {
-    return this.get<Student[]>(STORAGE_KEYS.STUDENTS, INITIAL_STUDENTS);
+    return this.studentsCache;
   }
 
   public getStudentCount(): number {
-    return this.getStudents().length;
+    return this.studentsCache.length;
   }
 
   public getStudentById(id: string): Student | undefined {
-    return this.getStudents().find((s) => s.id === id);
+    return this.studentsCache.find((s) => s.id === id);
   }
 
   public getStudentByRollNumber(rollNumber: string): Student | undefined {
     const cleanRoll = rollNumber.trim().toUpperCase();
-    return this.getStudents().find(
+    return this.studentsCache.find(
       (s) => s.rollNumber.trim().toUpperCase() === cleanRoll
     );
   }
 
   public saveStudent(studentData: Omit<Student, 'id' | 'createdAt' | 'updatedAt'>, id?: string): Student {
-    const students = this.getStudents();
+    const students = this.studentsCache;
     const now = new Date().toISOString();
     const cleanRoll = studentData.rollNumber.trim().toUpperCase();
 
-    // Check duplicate roll number
     const existingWithRoll = students.find(
       (s) => s.rollNumber.toUpperCase() === cleanRoll && s.id !== id
     );
@@ -977,32 +824,35 @@ class IronStorage {
         rollNumber: cleanRoll,
         updatedAt: now,
       };
-      students[idx] = updated;
-      this.set(STORAGE_KEYS.STUDENTS, students);
+      this.studentsCache = students.map((s, i) => (i === idx ? updated : s));
       this.notifyListeners();
-      api.students.update(id, updated).then(() => this.syncWithBackend()).catch(console.warn);
+      api.students.update(id, updated)
+        .then(() => this.syncWithBackend())
+        .catch(console.warn);
       return updated;
-    } else {
-      const newStudent: Student = {
-        ...studentData,
-        id: `std_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        rollNumber: cleanRoll,
-        createdAt: now,
-        updatedAt: now,
-      };
-      students.unshift(newStudent);
-      this.set(STORAGE_KEYS.STUDENTS, students);
-      this.notifyListeners();
-      api.students.create(newStudent).then(() => this.syncWithBackend()).catch(console.warn);
-      return newStudent;
     }
+
+    const newStudent: Student = {
+      ...studentData,
+      id: `std_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      rollNumber: cleanRoll,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.studentsCache = [newStudent, ...students];
+    this.notifyListeners();
+    api.students.create(newStudent)
+      .then(() => this.syncWithBackend())
+      .catch(console.warn);
+    return newStudent;
   }
 
   public deleteStudent(id: string): void {
-    const students = this.getStudents().filter((s) => s.id !== id);
-    this.set(STORAGE_KEYS.STUDENTS, students);
+    this.studentsCache = this.studentsCache.filter((s) => s.id !== id);
     this.notifyListeners();
-    api.students.delete(id).then(() => this.syncWithBackend()).catch(console.warn);
+    api.students.delete(id)
+      .then(() => this.syncWithBackend())
+      .catch(console.warn);
   }
 
   // --- DRIVES ---
