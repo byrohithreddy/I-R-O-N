@@ -12,7 +12,7 @@ export interface User {
 export interface Student {
   id: string;
   rollNumber: string;
-  fullName: string | null;
+  fullName: string;
   email: string;
   phone: string;
   college: string;
@@ -24,24 +24,6 @@ export interface Student {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
-  gender?: string;
-  dob?: string;
-  sscSchool?: string;
-  sscPercentage?: string;
-  sscPassoutYear?: string;
-  interCollege?: string;
-  interPercentage?: string;
-  interPassoutYear?: string;
-  diplomaCollege?: string;
-  diplomaPercentage?: string;
-  diplomaPassoutYear?: string;
-  panCardNo?: string;
-  aadharCardNo?: string;
-  eamcetRank?: string;
-  admissionType?: string;
-  fatherName?: string;
-  fatherMobile?: string;
-  permanentAddress?: string;
 }
 
 export type DriveStatus = 'DRAFT' | 'UPCOMING' | 'ONGOING' | 'COMPLETED' | 'CANCELLED' | 'EXPIRED';
@@ -177,7 +159,7 @@ export interface Placement {
   selectedAt: string;
   createdAt: string;
   rollNumber?: string;
-  studentName?: string | null;
+  studentName?: string;
   branch?: string;
 }
 

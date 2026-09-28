@@ -1,4 +1,3 @@
-import studentsMasterData from '../data/studentsMaster.json';
 import {
   Student,
   Drive,
@@ -33,7 +32,168 @@ const STORAGE_KEYS = {
 };
 
 // Initial Seed Data: Permanent Student Master Database
-const INITIAL_STUDENTS: Student[] = studentsMasterData as unknown as Student[];
+const INITIAL_STUDENTS: Student[] = [
+  {
+    id: 'std_01',
+    rollNumber: '22B81A0501',
+    fullName: 'Rohith Varma',
+    email: 'rohith.varma@college.edu',
+    phone: '+91 98480 12345',
+    college: 'Institute of Engineering & Technology',
+    branch: 'CSE',
+    department: 'Computer Science & Engineering',
+    academicYear: '2022-2026',
+    cgpa: 8.85,
+    backlogCount: 0,
+    isActive: true,
+    createdAt: '2025-08-01T10:00:00Z',
+    updatedAt: '2025-08-01T10:00:00Z',
+  },
+  {
+    id: 'std_02',
+    rollNumber: '22B81A0502',
+    fullName: 'Ananya Sharma',
+    email: 'ananya.s@college.edu',
+    phone: '+91 98480 23456',
+    college: 'Institute of Engineering & Technology',
+    branch: 'CSE',
+    department: 'Computer Science & Engineering',
+    academicYear: '2022-2026',
+    cgpa: 9.20,
+    backlogCount: 0,
+    isActive: true,
+    createdAt: '2025-08-01T10:00:00Z',
+    updatedAt: '2025-08-01T10:00:00Z',
+  },
+  {
+    id: 'std_03',
+    rollNumber: '22B81A0503',
+    fullName: 'Rahul Nambiar',
+    email: 'rahul.n@college.edu',
+    phone: '+91 98480 34567',
+    college: 'Institute of Engineering & Technology',
+    branch: 'ECE',
+    department: 'Electronics & Communication',
+    academicYear: '2022-2026',
+    cgpa: 7.95,
+    backlogCount: 0,
+    isActive: true,
+    createdAt: '2025-08-01T10:00:00Z',
+    updatedAt: '2025-08-01T10:00:00Z',
+  },
+  {
+    id: 'std_04',
+    rollNumber: '22B81A0504',
+    fullName: 'Sai Teja Reddy',
+    email: 'saiteja.r@college.edu',
+    phone: '+91 98480 45678',
+    college: 'Institute of Engineering & Technology',
+    branch: 'CSIT',
+    department: 'Computer Science & Information Technology',
+    academicYear: '2022-2026',
+    cgpa: 8.40,
+    backlogCount: 0,
+    isActive: true,
+    createdAt: '2025-08-01T10:00:00Z',
+    updatedAt: '2025-08-01T10:00:00Z',
+  },
+  {
+    id: 'std_05',
+    rollNumber: '22B81A0505',
+    fullName: 'Pooja Hegde',
+    email: 'pooja.h@college.edu',
+    phone: '+91 98480 56789',
+    college: 'Institute of Engineering & Technology',
+    branch: 'CSE',
+    department: 'Computer Science & Engineering',
+    academicYear: '2022-2026',
+    cgpa: 7.20,
+    backlogCount: 1,
+    isActive: true,
+    createdAt: '2025-08-01T10:00:00Z',
+    updatedAt: '2025-08-01T10:00:00Z',
+  },
+  {
+    id: 'std_06',
+    rollNumber: '22B81A0506',
+    fullName: 'Vikramaditya Rao',
+    email: 'vikram.rao@college.edu',
+    phone: '+91 98480 67890',
+    college: 'Institute of Engineering & Technology',
+    branch: 'MECH',
+    department: 'Mechanical Engineering',
+    academicYear: '2022-2026',
+    cgpa: 6.80,
+    backlogCount: 0,
+    isActive: true,
+    createdAt: '2025-08-01T10:00:00Z',
+    updatedAt: '2025-08-01T10:00:00Z',
+  },
+  {
+    id: 'std_07',
+    rollNumber: '22B81A0507',
+    fullName: 'Meera Iyer',
+    email: 'meera.iyer@college.edu',
+    phone: '+91 98480 78901',
+    college: 'Institute of Engineering & Technology',
+    branch: 'ECE',
+    department: 'Electronics & Communication',
+    academicYear: '2022-2026',
+    cgpa: 8.65,
+    backlogCount: 0,
+    isActive: true,
+    createdAt: '2025-08-01T10:00:00Z',
+    updatedAt: '2025-08-01T10:00:00Z',
+  },
+  {
+    id: 'std_08',
+    rollNumber: '22B81A0508',
+    fullName: 'Karthik Subramanian',
+    email: 'karthik.s@college.edu',
+    phone: '+91 98480 89012',
+    college: 'Institute of Engineering & Technology',
+    branch: 'EEE',
+    department: 'Electrical & Electronics',
+    academicYear: '2022-2026',
+    cgpa: 7.45,
+    backlogCount: 0,
+    isActive: true,
+    createdAt: '2025-08-01T10:00:00Z',
+    updatedAt: '2025-08-01T10:00:00Z',
+  },
+  {
+    id: 'std_09',
+    rollNumber: '22B81A0509',
+    fullName: 'Deepika Sen',
+    email: 'deepika.sen@college.edu',
+    phone: '+91 98480 90123',
+    college: 'Institute of Engineering & Technology',
+    branch: 'CSE',
+    department: 'Computer Science & Engineering',
+    academicYear: '2022-2026',
+    cgpa: 9.45,
+    backlogCount: 0,
+    isActive: true,
+    createdAt: '2025-08-01T10:00:00Z',
+    updatedAt: '2025-08-01T10:00:00Z',
+  },
+  {
+    id: 'std_10',
+    rollNumber: '22B81A0510',
+    fullName: 'Aditya Kulkarni',
+    email: 'aditya.k@college.edu',
+    phone: '+91 98480 01234',
+    college: 'Institute of Engineering & Technology',
+    branch: 'CSIT',
+    department: 'Computer Science & Information Technology',
+    academicYear: '2022-2026',
+    cgpa: 8.10,
+    backlogCount: 0,
+    isActive: true,
+    createdAt: '2025-08-01T10:00:00Z',
+    updatedAt: '2025-08-01T10:00:00Z',
+  },
+];
 
 // Seed Drives with realistic schedules and rounds
 const INITIAL_DRIVES: Drive[] = [
@@ -760,19 +920,7 @@ class IronStorage {
   }
 
   public init(forceReset = false): void {
-    const existing = localStorage.getItem(STORAGE_KEYS.STUDENTS);
-    let needsRefresh = forceReset || !existing;
-    if (existing) {
-      try {
-        const parsed = JSON.parse(existing);
-        if (!Array.isArray(parsed) || parsed.length < 500 || parsed[0]?.rollNumber === '22B81A0501') {
-          needsRefresh = true;
-        }
-      } catch {
-        needsRefresh = true;
-      }
-    }
-    if (needsRefresh) {
+    if (forceReset || !localStorage.getItem(STORAGE_KEYS.STUDENTS)) {
       this.set(STORAGE_KEYS.STUDENTS, INITIAL_STUDENTS);
       this.set(STORAGE_KEYS.DRIVES, INITIAL_DRIVES);
       this.set(STORAGE_KEYS.ROUNDS, INITIAL_ROUNDS);
@@ -797,18 +945,7 @@ class IronStorage {
   }
 
   public getStudentById(id: string): Student | undefined {
-    const cleanId = id.trim().toLowerCase();
-    const matchLegacy = cleanId.match(/^std_0?(\d+)$/);
-    if (matchLegacy) {
-      const idx = parseInt(matchLegacy[1], 10) - 1;
-      const all = this.getStudents();
-      if (idx >= 0 && idx < 10 && all[idx]) {
-        return all[idx];
-      }
-    }
-    return this.getStudents().find(
-      (s) => s.id.toLowerCase() === cleanId || s.rollNumber.toLowerCase() === cleanId
-    );
+    return this.getStudents().find((s) => s.id === id);
   }
 
   public getStudentByRollNumber(rollNumber: string): Student | undefined {
