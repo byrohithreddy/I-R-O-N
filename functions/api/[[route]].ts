@@ -729,8 +729,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         email: s.email,
         phone: s.phone,
         branch: s.branch,
-        department: s.branch,
-        academicYear: s.academic_year || '2022-2026',
+        college: s.college || 'Institute of Engineering & Technology',
+        department: s.department || s.branch,
+        academicYear: s.academic_year || '2023-2027',
         cgpa: s.cgpa,
         activeBacklogs: s.active_backlogs,
         historyOfBacklogs: s.history_of_backlogs,
@@ -803,7 +804,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const id = s.id || `std_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
       await env.DB.prepare(
         `INSERT INTO students (id, roll_number, full_name, email, phone, branch, cgpa, active_backlogs, history_of_backlogs, gender, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
       )
         .bind(
           id,
@@ -811,8 +812,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           s.fullName,
           s.email || `${cleanRoll.toLowerCase()}@college.edu`,
           s.phone || '',
+          s.college || 'Institute of Engineering & Technology',
           s.branch || 'CSE',
-          Number(s.cgpa) || 7.0,
+          s.department || s.branch || 'Engineering',
+          s.academicYear || s.academic_year || '2023-2027',
+          Number(s.cgpa ?? 0),
           Number(s.activeBacklogs || s.active_backlogs) || 0,
           Number(s.historyOfBacklogs || s.history_of_backlogs) || 0,
           s.gender || 'MALE'
