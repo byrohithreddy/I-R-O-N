@@ -71,7 +71,7 @@ export interface DriveRound {
 }
 
 export type EligibilityStatus = 'ELIGIBLE' | 'NOT_ELIGIBLE' | 'OVERRIDDEN';
-export type ApplicationStatus = 'APPLIED' | 'IN_PROGRESS' | 'REJECTED' | 'FINAL_SELECTED' | 'PLACED';
+export type ApplicationStatus = 'APPLIED' | 'IN_PROGRESS' | 'ACTIVE' | 'REJECTED' | 'FINAL_SELECTED' | 'PLACED';
 
 export interface Application {
   id: string;
@@ -158,6 +158,9 @@ export interface Placement {
   finalRoundId: string;
   selectedAt: string;
   createdAt: string;
+  rollNumber?: string;
+  studentName?: string;
+  branch?: string;
 }
 
 export type ArchiveStatus = 'NOT_STARTED' | 'GENERATED' | 'DOWNLOADED' | 'CONFIRMED';

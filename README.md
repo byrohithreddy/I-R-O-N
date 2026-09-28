@@ -190,7 +190,7 @@ This software, including all source code, documentation, designs, database schem
 3. **No Reverse Engineering**: Reverse engineering, decompiling, extracting, or repurposing proprietary business logic, scoring mechanisms, and rule engines from this project is strictly prohibited.
 
 For licensing inquiries, commercial partnerships, or custom institutional deployments, please contact:
-📧 **mushkerohithreddy@zohomail.in**
+📧 **rohith2005hyd@gmail.com**
 
 ---
 

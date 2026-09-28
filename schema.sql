@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS rounds (
 );
 
 CREATE INDEX IF NOT EXISTS idx_rounds_drive ON rounds(drive_id);
-CREATE INDEX IF NOT EXISTS idx_rounds_drive_num ON rounds(drive_id, round_number);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rounds_drive_round_number ON rounds(drive_id, round_number);
 
 -- 6. Applications (Rule 12: UNIQUE(drive_id, student_id))
 CREATE TABLE IF NOT EXISTS applications (

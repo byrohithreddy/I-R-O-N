@@ -95,6 +95,21 @@ export async function initializeDatabase(db: IronDatabase): Promise<void> {
     db.exec(schemaSql);
   }
 
+  // Ensure UNIQUE index on rounds(drive_id, round_number)
+  try {
+    db.exec(`
+      DELETE FROM rounds
+      WHERE id NOT IN (
+        SELECT MIN(id)
+        FROM rounds
+        GROUP BY drive_id, round_number
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_rounds_drive_round_number ON rounds(drive_id, round_number);
+    `);
+  } catch (e) {
+    // Already enforced or index exists
+  }
+
   // 1. Check if TPO admin exists
   const existingTpo = await db
     .prepare('SELECT id FROM users WHERE username = ?')

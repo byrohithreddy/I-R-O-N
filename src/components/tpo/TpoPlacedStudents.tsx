@@ -26,6 +26,7 @@ export const TpoPlacedStudents: React.FC<TpoPlacedStudentsProps> = () => {
     const d = driveMap.get(p.driveId);
     return {
       id: p.id,
+      studentId: p.studentId,
       rollNumber: s?.rollNumber || 'N/A',
       name: s?.fullName || 'Candidate',
       branch: s?.branch || 'N/A',

@@ -889,19 +889,20 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
     if (customRounds) {
       for (let i = 0; i < customRounds.length; i++) {
         const rnd = customRounds[i];
+        const rId = rnd.id || `rnd_${driveId}_${i + 1}`;
         await db
           .prepare(
-            `INSERT INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
+            `INSERT OR REPLACE INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
           )
           .bind(
-            `rnd_${driveId}_${i + 1}`,
+            rId,
             driveId,
             i + 1,
             rnd.roundName,
             rnd.roundType || 'Technical',
             rnd.description || '',
-            'UPCOMING',
+            rnd.status || 'UPCOMING',
             rnd.isFinalRound ? 1 : 0
           )
           .run();
@@ -910,7 +911,7 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
       // Default 3 rounds
       await db
         .prepare(
-          `INSERT INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
+          `INSERT OR REPLACE INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
            VALUES (?, ?, 1, 'Round 1: Screening & Aptitude', 'Aptitude', 'Screening assessment', 'UPCOMING', 0, datetime('now'))`
         )
         .bind(`rnd_${driveId}_1`, driveId)
@@ -918,7 +919,7 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
 
       await db
         .prepare(
-          `INSERT INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
+          `INSERT OR REPLACE INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
            VALUES (?, ?, 2, 'Round 2: Technical Interview', 'Technical', 'Technical evaluation', 'UPCOMING', 0, datetime('now'))`
         )
         .bind(`rnd_${driveId}_2`, driveId)
@@ -926,7 +927,7 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
 
       await db
         .prepare(
-          `INSERT INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
+          `INSERT OR REPLACE INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
            VALUES (?, ?, 3, 'Round 3: Final HR Interview', 'HR', 'Final HR round', 'UPCOMING', 1, datetime('now'))`
         )
         .bind(`rnd_${driveId}_3`, driveId)
@@ -1102,10 +1103,10 @@ apiRouter.post('/rounds', authMiddleware, roleMiddleware(['TPO']), async (req: R
     const db = getDatabase();
     const r = req.body;
 
-    const roundId = `rnd_${r.driveId}_${Date.now()}`;
+    const roundId = r.id || `rnd_${r.driveId}_${Date.now()}`;
     await db
       .prepare(
-        `INSERT INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
+        `INSERT OR REPLACE INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
       )
       .bind(

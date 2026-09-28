@@ -2,6 +2,7 @@ import {
   Student,
   Drive,
   DriveRound,
+  DriveCredentials,
   Application,
   RoundCandidate,
   Batch,
@@ -865,7 +866,15 @@ class IronStorage {
           this.set(STORAGE_KEYS.DRIVES, mergedDrives);
         }
         if (Array.isArray(data.rounds)) {
-          this.set(STORAGE_KEYS.ROUNDS, data.rounds);
+          // Deduplicate rounds by (driveId, roundNumber) as authoritative defense-in-depth
+          const uniqueRoundsMap = new Map<string, DriveRound>();
+          for (const r of data.rounds) {
+            const key = `${r.driveId}_${r.roundNumber}`;
+            if (!uniqueRoundsMap.has(key)) {
+              uniqueRoundsMap.set(key, r);
+            }
+          }
+          this.set(STORAGE_KEYS.ROUNDS, Array.from(uniqueRoundsMap.values()));
         }
         if (Array.isArray(data.applications)) {
           this.set(STORAGE_KEYS.APPLICATIONS, data.applications);
@@ -1070,14 +1079,6 @@ class IronStorage {
       this.pendingDriveUpdates.set(id, { data: updated, timestamp: Date.now() });
       this.set(STORAGE_KEYS.DRIVES, drives);
       this.notifyListeners();
-      api.drives.update(id, updated)
-        .then(() => {
-          this.pendingDriveUpdates.delete(id);
-          this.syncWithBackend().catch(() => {});
-        })
-        .catch((err) => {
-          console.warn('Backend drive update warn:', err);
-        });
       return updated;
     } else {
       const companySlug = (driveData.companyName || 'drive')
@@ -1112,19 +1113,21 @@ class IronStorage {
       this.pendingDriveUpdates.set(newDrive.id, { data: newDrive, timestamp: Date.now() });
       this.set(STORAGE_KEYS.DRIVES, drives);
 
-      // Save custom rounds if provided by TPO during drive creation
+      // Save custom rounds locally with syncToBackend = false (Rule: single authoritative drive+rounds backend path)
       if (customRounds && customRounds.length > 0) {
         customRounds.forEach((r, idx) => {
           this.saveRound({
+            id: `rnd_${newDrive.id}_${idx + 1}`,
             ...r,
             driveId: newDrive.id,
             roundNumber: idx + 1,
             status: r.status || 'UPCOMING',
-          });
+          }, undefined, false);
         });
       } else {
         // Default 3 rounds
         this.saveRound({
+          id: `rnd_${newDrive.id}_1`,
           driveId: newDrive.id,
           roundNumber: 1,
           roundName: 'Round 1: Screening & Aptitude',
@@ -1132,9 +1135,10 @@ class IronStorage {
           description: 'First screening assessment.',
           status: 'UPCOMING',
           isFinalRound: false,
-        });
+        }, undefined, false);
 
         this.saveRound({
+          id: `rnd_${newDrive.id}_2`,
           driveId: newDrive.id,
           roundNumber: 2,
           roundName: 'Round 2: Technical Interview',
@@ -1142,9 +1146,10 @@ class IronStorage {
           description: 'Technical evaluation round.',
           status: 'UPCOMING',
           isFinalRound: false,
-        });
+        }, undefined, false);
 
         this.saveRound({
+          id: `rnd_${newDrive.id}_3`,
           driveId: newDrive.id,
           roundNumber: 3,
           roundName: 'Round 3: Final HR Interview',
@@ -1152,27 +1157,10 @@ class IronStorage {
           description: 'Final round for placement selection.',
           status: 'UPCOMING',
           isFinalRound: true,
-        });
+        }, undefined, false);
       }
 
       this.notifyListeners();
-      // Persist to backend D1 & trigger sync
-      api.drives.create({
-        ...newDrive,
-        rounds: customRounds || [
-          { roundNumber: 1, roundName: 'Round 1: Screening & Aptitude', roundType: 'Aptitude', isFinalRound: false },
-          { roundNumber: 2, roundName: 'Round 2: Technical Interview', roundType: 'Technical', isFinalRound: false },
-          { roundNumber: 3, roundName: 'Round 3: Final HR Interview', roundType: 'HR', isFinalRound: true },
-        ],
-      })
-        .then(() => {
-          this.pendingDriveUpdates.delete(newDrive.id);
-          this.syncWithBackend().catch(() => {});
-        })
-        .catch((err) => {
-          console.warn('Backend drive create warn:', err);
-        });
-
       return newDrive;
     }
   }
@@ -1187,12 +1175,30 @@ class IronStorage {
       if (id) {
         await api.drives.update(id, saved);
         this.pendingDriveUpdates.delete(id);
+        await this.syncWithBackend().catch(() => {});
       } else {
+        const roundsToSend = customRounds && customRounds.length > 0
+          ? customRounds.map((r, idx) => ({
+              id: `rnd_${saved.id}_${idx + 1}`,
+              roundNumber: idx + 1,
+              roundName: r.roundName,
+              roundType: r.roundType || 'Technical',
+              description: r.description || '',
+              status: r.status || 'UPCOMING',
+              isFinalRound: Boolean(r.isFinalRound),
+            }))
+          : [
+              { id: `rnd_${saved.id}_1`, roundNumber: 1, roundName: 'Round 1: Screening & Aptitude', roundType: 'Aptitude' as const, isFinalRound: false },
+              { id: `rnd_${saved.id}_2`, roundNumber: 2, roundName: 'Round 2: Technical Interview', roundType: 'Technical' as const, isFinalRound: false },
+              { id: `rnd_${saved.id}_3`, roundNumber: 3, roundName: 'Round 3: Final HR Interview', roundType: 'HR' as const, isFinalRound: true },
+            ];
+
         await api.drives.create({
           ...saved,
-          rounds: customRounds,
+          rounds: roundsToSend,
         });
         this.pendingDriveUpdates.delete(saved.id);
+        await this.syncWithBackend().catch(() => {});
       }
     } catch (e) {
       console.warn('Async drive backend sync error:', e);
@@ -1215,7 +1221,7 @@ class IronStorage {
     return this.getRounds().find((r) => r.id === id);
   }
 
-  public saveRound(roundData: Partial<DriveRound>, id?: string): DriveRound {
+  public saveRound(roundData: Partial<DriveRound>, id?: string, syncToBackend: boolean = true): DriveRound {
     const rounds = this.getRounds();
     if (id) {
       const idx = rounds.findIndex((r) => r.id === id);
@@ -1227,7 +1233,7 @@ class IronStorage {
       return updated;
     } else {
       const newRound: DriveRound = {
-        id: `rnd_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+        id: roundData.id || `rnd_${roundData.driveId || 'rnd'}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
         driveId: roundData.driveId!,
         roundNumber: roundData.roundNumber || rounds.filter((r) => r.driveId === roundData.driveId).length + 1,
         roundName: roundData.roundName || 'Round',
@@ -1236,10 +1242,23 @@ class IronStorage {
         status: roundData.status || 'UPCOMING',
         isFinalRound: roundData.isFinalRound || false,
       };
-      rounds.push(newRound);
+
+      // Ensure no duplicate (driveId, roundNumber) exists locally
+      const existingIdx = rounds.findIndex(
+        (r) => r.driveId === newRound.driveId && r.roundNumber === newRound.roundNumber
+      );
+      if (existingIdx >= 0) {
+        rounds[existingIdx] = newRound;
+      } else {
+        rounds.push(newRound);
+      }
+
       this.set(STORAGE_KEYS.ROUNDS, rounds);
       this.notifyListeners();
-      api.rounds.create(newRound).catch(console.warn);
+
+      if (syncToBackend) {
+        api.rounds.create(newRound).catch(console.warn);
+      }
       return newRound;
     }
   }
@@ -1417,12 +1436,13 @@ class IronStorage {
     // 2. Locate or resolve the student record
     let student = this.getStudentByRollNumber(cleanRoll);
     if (!student && res.student) {
-      student = {
+      const newStudent: Student = {
         id: res.student.id,
         rollNumber: res.student.rollNumber,
         fullName: res.student.fullName,
         email: email.trim(),
         phone: phone.trim(),
+        college: 'Institute of Engineering & Technology',
         branch: 'CSE',
         department: 'Computer Science & Engineering',
         academicYear: '2022-2026',
@@ -1432,8 +1452,9 @@ class IronStorage {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
+      student = newStudent;
       const students = this.getStudents();
-      students.push(student);
+      students.push(newStudent);
       this.set(STORAGE_KEYS.STUDENTS, students);
     }
 
