@@ -910,12 +910,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
         const values = [
           s.fullName || s.full_name,
-          s.email || `${cleanRoll.toLowerCase()}@college.edu`,
+          s.email ?? '',
           s.phone ?? '',
-          s.college ?? 'Institute of Engineering & Technology',
+          s.college ?? '',
           s.branch ?? '',
-          s.department ?? s.branch ?? '',
-          s.academicYear ?? s.academic_year ?? '2023-2027',
+          s.department ?? '',
+          s.academicYear ?? s.academic_year ?? '',
           Number(s.cgpa ?? 0),
           Number(s.backlogCount ?? s.activeBacklogs ?? s.active_backlogs ?? 0),
           Number(s.historyOfBacklogs ?? s.history_of_backlogs ?? 0),
