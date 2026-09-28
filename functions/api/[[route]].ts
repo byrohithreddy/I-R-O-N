@@ -759,7 +759,6 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         historyOfBacklogs: s.history_of_backlogs,
         backlogCount: s.active_backlogs,
         gender: s.gender,
-        college: 'Institute of Engineering & Technology',
         createdAt: s.created_at,
         updatedAt: s.updated_at,
       }, 200, {
@@ -795,7 +794,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         email: s.email,
         phone: s.phone,
         branch: s.branch,
-        department: s.branch,
+        college: s.college || 'Institute of Engineering & Technology',
+        department: s.department || s.branch,
         academicYear: s.academic_year || '2023-2027',
         cgpa: s.cgpa,
         activeBacklogs: s.active_backlogs,
