@@ -249,10 +249,10 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
         fullName: s.full_name,
         email: s.email,
         phone: s.phone,
-        college: 'Institute of Engineering & Technology',
+        college: s.college || 'Institute of Engineering & Technology',
         branch: s.branch,
-        department: s.branch === 'CSE' ? 'Computer Science & Engineering' : s.branch === 'ECE' ? 'Electronics & Communication' : s.branch === 'IT' ? 'Information Technology' : 'Engineering',
-        academicYear: '2022-2026',
+        department: s.department || (s.branch === 'CSE' ? 'Computer Science & Engineering' : s.branch === 'ECE' ? 'Electronics & Communication' : s.branch === 'IT' ? 'Information Technology' : 'Engineering'),
+        academicYear: s.academic_year || '2023-2027',
         cgpa: s.cgpa,
         backlogCount: s.active_backlogs ?? 0,
         activeBacklogs: s.active_backlogs ?? 0,
@@ -585,7 +585,7 @@ apiRouter.post('/students/bulk-import', authMiddleware, roleMiddleware(['TPO']),
     }
 
     let inserted = 0;
-    let duplicates = 0;
+    let updated = 0;
     let errors = 0;
 
     for (const s of rawStudents) {
@@ -601,15 +601,36 @@ apiRouter.post('/students/bulk-import', authMiddleware, roleMiddleware(['TPO']),
         .first();
 
       if (existing) {
-        duplicates++;
+        await db.prepare(
+          `UPDATE students
+           SET roll_number = ?, full_name = ?, email = ?, phone = ?, college = ?, branch = ?,
+               department = ?, academic_year = ?, cgpa = ?, active_backlogs = ?,
+               history_of_backlogs = ?, gender = ?, updated_at = datetime('now')
+           WHERE id = ?`
+        ).bind(
+          cleanRoll,
+          s.fullName || s.full_name,
+          s.email || `${cleanRoll.toLowerCase()}@college.edu`,
+          s.phone ?? '',
+          s.college ?? 'Institute of Engineering & Technology',
+          s.branch ?? '',
+          s.department ?? s.branch ?? '',
+          s.academicYear ?? s.academic_year ?? '2023-2027',
+          Number(s.cgpa ?? 0),
+          Number(s.backlogCount ?? s.activeBacklogs ?? s.active_backlogs ?? 0),
+          Number(s.historyOfBacklogs ?? s.history_of_backlogs ?? 0),
+          s.gender ?? 'Other',
+          existing.id
+        ).run();
+        updated++;
         continue;
       }
 
       const id = `std_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
       await db
         .prepare(
-          `INSERT INTO students (id, roll_number, full_name, email, phone, branch, cgpa, active_backlogs, history_of_backlogs, gender, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+          `INSERT INTO students (id, roll_number, full_name, email, phone, college, branch, department, academic_year, cgpa, active_backlogs, history_of_backlogs, gender, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
         )
         .bind(
           id,
@@ -617,8 +638,11 @@ apiRouter.post('/students/bulk-import', authMiddleware, roleMiddleware(['TPO']),
           s.fullName || s.full_name || 'Student',
           s.email || `${cleanRoll.toLowerCase()}@college.edu`,
           s.phone || '',
+          s.college || 'Institute of Engineering & Technology',
           s.branch || 'CSE',
-          Number(s.cgpa) || 7.0,
+          s.department || s.branch || 'Engineering',
+          s.academicYear || s.academic_year || '2023-2027',
+          Number(s.cgpa ?? 0),
           Number(s.backlogCount ?? s.activeBacklogs ?? s.active_backlogs ?? 0),
           Number(s.historyOfBacklogs || s.history_of_backlogs) || 0,
           s.gender || 'MALE'
@@ -628,7 +652,7 @@ apiRouter.post('/students/bulk-import', authMiddleware, roleMiddleware(['TPO']),
       inserted++;
     }
 
-    res.json({ total: rawStudents.length, inserted, duplicates, errors });
+    res.json({ total: rawStudents.length, inserted, updated, errors });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
