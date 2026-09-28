@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Student } from '../../types';
 import { ironStorage } from '../../services/storage';
+import { api } from '../../services/api';
 import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import {
@@ -278,17 +279,20 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
     });
   };
 
-  const handleCommitImport = () => {
+  const handleCommitImport = async () => {
     if (!importReport || importReport.valid.length === 0) return;
 
-    for (const s of importReport.valid) {
-      ironStorage.saveStudent(s);
-    }
+    try {
+      await api.students.bulkImport(importReport.valid);
+      await ironStorage.syncWithBackend();
 
-    setIsImportOpen(false);
-    setImportText('');
-    setImportReport(null);
-    onRefresh();
+      setIsImportOpen(false);
+      setImportText('');
+      setImportReport(null);
+      onRefresh();
+    } catch (error: any) {
+      setFormError(error?.message || 'Student import failed. No records were imported.');
+    }
   };
 
   return (
