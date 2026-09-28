@@ -825,7 +825,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       const id = s.id || `std_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
       await env.DB.prepare(
-        `INSERT INTO students (id, roll_number, full_name, email, phone, branch, cgpa, active_backlogs, history_of_backlogs, gender, created_at, updated_at)
+        `INSERT INTO students (id, roll_number, full_name, email, phone, college, branch, department, academic_year, cgpa, active_backlogs, history_of_backlogs, gender, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
       )
         .bind(
@@ -857,7 +857,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       await env.DB.prepare(
         `UPDATE students
-         SET roll_number = ?, full_name = ?, email = ?, phone = ?, branch = ?, cgpa = ?, active_backlogs = ?, history_of_backlogs = ?, gender = ?, updated_at = datetime('now')
+         SET roll_number = ?, full_name = ?, email = ?, phone = ?, college = ?, branch = ?, department = ?, academic_year = ?, cgpa = ?, active_backlogs = ?, history_of_backlogs = ?, gender = ?, updated_at = datetime('now')
          WHERE id = ?`
       )
         .bind(
@@ -865,7 +865,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           s.fullName,
           s.email,
           s.phone,
+          s.college,
           s.branch,
+          s.department,
+          s.academicYear ?? s.academic_year,
           s.cgpa,
           s.activeBacklogs ?? s.active_backlogs ?? 0,
           s.historyOfBacklogs ?? s.history_of_backlogs ?? 0,
