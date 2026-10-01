@@ -104,7 +104,13 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     });
   };
 
-  const secret = env.JWT_SECRET || 'iron_campus_recruitment_jwt_secret_key_2026';
+  const secret = env.JWT_SECRET;
+  if (!secret) {
+    return new Response(JSON.stringify({ error: 'Server authentication secret is not configured' }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
   function calculateIstApplicationDeadline(driveDate: string): string {
     if (!driveDate) return new Date().toISOString();
