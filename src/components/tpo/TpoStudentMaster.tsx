@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Student } from '../../types';
 import { ironStorage } from '../../services/storage';
 import { api } from '../../services/api';
+import { parseCsvRows, escapeCsvField } from '../../utils/csv';
 import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import {
@@ -191,9 +192,20 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
     const headers = [
       'Roll Number,Full Name,Email,Phone,College,Branch,Department,Academic Year,CGPA,Backlogs,Active',
     ];
-    const rows = students.map(
-      (s) =>
-        `"${s.rollNumber}","${s.fullName}","${s.email}","${s.phone}","${s.college}","${s.branch}","${s.department}","${s.academicYear}",${s.cgpa},${s.backlogCount},${s.isActive}`
+    const rows = students.map((s) =>
+      [
+        escapeCsvField(s.rollNumber),
+        escapeCsvField(s.fullName),
+        escapeCsvField(s.email),
+        escapeCsvField(s.phone),
+        escapeCsvField(s.college),
+        escapeCsvField(s.branch),
+        escapeCsvField(s.department),
+        escapeCsvField(s.academicYear),
+        s.cgpa,
+        s.backlogCount,
+        s.isActive ? 1 : 0,
+      ].join(',')
     );
     const content = [headers, ...rows].join('\n');
     const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
@@ -206,25 +218,26 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
     document.body.removeChild(link);
   };
 
-  // CSV Import Validation (Per Section 53)
+  // CSV Import Validation (RFC 4180 Compliant)
   const handleValidateImport = () => {
     if (!importText.trim()) return;
 
-    const lines = importText.trim().split('\n');
-    const existingRolls = new Set<string>();
+    const parsedRows = parseCsvRows(importText);
+    if (parsedRows.length === 0) return;
 
+    const existingRolls = new Set<string>();
     const valid: Student[] = [];
     const invalid: { row: number; reason: string }[] = [];
     const duplicates: string[] = [];
 
     // Skip header if detected
-    const startIndex = lines[0].toLowerCase().includes('roll') ? 1 : 0;
+    const firstRowText = parsedRows[0].join(' ').toLowerCase();
+    const startIndex = firstRowText.includes('roll') ? 1 : 0;
 
-    for (let i = startIndex; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
+    for (let i = startIndex; i < parsedRows.length; i++) {
+      const cols = parsedRows[i];
+      if (!cols || cols.length === 0 || cols.every((c) => !c.trim())) continue;
 
-      const cols = line.split(',').map((c) => c.replace(/^["']|["']$/g, '').trim());
       // Expected: Roll, Name, Email, Phone, College, Branch, Department, AcademicYear, CGPA, Backlogs
       const [roll, name, email, phone, college, branch, department, year, cgpaStr, backlogsStr] = cols;
 
@@ -233,7 +246,7 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
         continue;
       }
 
-      const cleanRoll = roll.toUpperCase();
+      const cleanRoll = roll.trim().toUpperCase();
       if (existingRolls.has(cleanRoll)) {
         duplicates.push(cleanRoll);
         continue;
@@ -245,7 +258,7 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
         continue;
       }
 
-      const backlogs = parseInt(backlogsStr) || 0;
+      const backlogs = parseInt(backlogsStr, 10) || 0;
       if (backlogs < 0) {
         invalid.push({ row: i + 1, reason: `Invalid backlogs value: ${backlogsStr}` });
         continue;
@@ -256,13 +269,13 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
       valid.push({
         id: `std_imp_${Date.now()}_${i}`,
         rollNumber: cleanRoll,
-        fullName: name,
-        email: email || `${cleanRoll.toLowerCase()}@college.edu`,
-        phone: phone || '',
-        college: college || 'Institute of Engineering & Technology',
-        branch: branch || 'CSE',
-        department: department || 'Engineering',
-        academicYear: year || '2023-2027',
+        fullName: name.trim(),
+        email: (email || `${cleanRoll.toLowerCase()}@college.edu`).trim(),
+        phone: (phone || '').trim(),
+        college: (college || 'Institute of Engineering & Technology').trim(),
+        branch: (branch || 'CSE').trim().toUpperCase(),
+        department: (department || branch || 'Engineering').trim(),
+        academicYear: (year || '2023-2027').trim(),
         cgpa,
         backlogCount: backlogs,
         isActive: true,
@@ -272,7 +285,7 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
     }
 
     setImportReport({
-      total: lines.length - startIndex,
+      total: parsedRows.length - startIndex,
       valid,
       invalid,
       duplicates,
@@ -283,13 +296,14 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
     if (!importReport || importReport.valid.length === 0) return;
 
     try {
-      await api.students.bulkImport(importReport.valid);
+      const res = await api.students.bulkImport(importReport.valid);
       await ironStorage.syncWithBackend();
 
       setIsImportOpen(false);
       setImportText('');
       setImportReport(null);
       onRefresh();
+      alert(`Student Import Complete: ${res.inserted || 0} inserted, ${res.updated || 0} updated, ${res.errors || 0} errors.`);
     } catch (error: any) {
       setFormError(error?.message || 'Student import failed. No records were imported.');
     }

@@ -104,7 +104,7 @@ export const api = {
       });
     },
 
-    async bulkImport(students: Partial<Student>[]): Promise<{ total: number; inserted: number; duplicates: number; errors: number }> {
+    async bulkImport(students: Partial<Student>[]): Promise<{ total: number; inserted: number; duplicates?: number; updated?: number; errors: number }> {
       return request('/students/bulk-import', {
         method: 'POST',
         body: JSON.stringify({ students }),

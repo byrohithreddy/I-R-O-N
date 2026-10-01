@@ -15,6 +15,7 @@ import {
 } from '../types';
 import JSZip from 'jszip';
 import { api } from './api';
+import { calculateIstApplicationDeadline } from '../utils/date';
 
 const STORAGE_KEYS = {
   USERS: 'iron_users_v1',
@@ -672,16 +673,16 @@ class IronStorage {
       if (data) {
         // Fast & comprehensive fingerprint to detect any entity changes, additions, or updates
         const currentFingerprint = JSON.stringify({
-          stCount: data.students?.length,
-          drSummary: data.drives?.map((d) => `${d.id}:${d.status}:${d.updatedAt || ''}`).join(','),
-          rdSummary: data.rounds?.map((r) => `${r.id}:${r.status}`).join(','),
+          stSummary: `${data.students?.length}:${data.students?.[0]?.updatedAt || ''}:${data.students?.[data.students.length - 1]?.updatedAt || ''}:${data.students?.[0]?.cgpa || ''}`,
+          drSummary: data.drives?.map((d) => `${d.id}:${d.status}:${d.updatedAt || ''}:${d.applicationDeadline || ''}`).join(','),
+          rdSummary: data.rounds?.map((r) => `${r.id}:${r.status}:${r.isFinalRound}`).join(','),
           apSummary: data.applications?.map((a) => `${a.id}:${a.eligibilityStatus}:${a.status}`).join(','),
-          cdCount: data.candidates?.length,
-          btSummary: data.batches?.map((b) => `${b.id}:${b.status}`).join(','),
-          bsCount: data.batchStudents?.length,
-          evCount: data.evaluations?.length,
-          rrCount: data.roundResults?.length,
-          plCount: data.placements?.length,
+          cdSummary: `${data.candidates?.length}:${data.candidates?.map((c) => `${c.id}:${c.entryStatus}`).join(',')}`,
+          btSummary: data.batches?.map((b) => `${b.id}:${b.status}:${b.capacity}`).join(','),
+          bsSummary: `${data.batchStudents?.length}:${data.batchStudents?.map((bs) => `${bs.batchId}:${bs.studentId}`).join(',')}`,
+          evSummary: `${data.evaluations?.length}:${data.evaluations?.map((e) => `${e.batchId}:${e.studentId}:${e.action}`).join(',')}`,
+          rrSummary: `${data.roundResults?.length}:${data.roundResults?.map((r) => `${r.roundId}:${r.studentId}:${r.result}`).join(',')}`,
+          plSummary: data.placements?.length,
         });
 
         if (currentFingerprint === this.lastSyncFingerprint) {
@@ -907,7 +908,7 @@ class IronStorage {
 
     // Calculate deadline as driveDate 00:00:00 (Rule 10 & 13)
     const driveDate = driveData.driveDate || new Date().toISOString().split('T')[0];
-    const applicationDeadline = `${driveDate}T00:00:00Z`;
+    const applicationDeadline = calculateIstApplicationDeadline(driveDate);
 
     // Retention expires 6 months after drive date (Rule 30)
     const driveDateObj = new Date(driveDate);
@@ -1286,26 +1287,28 @@ class IronStorage {
     // 2. Locate or resolve the student record
     let student = this.getStudentByRollNumber(cleanRoll);
     if (!student && res.student) {
+      const studentData = res.student as any;
       const newStudent: Student = {
-        id: res.student.id,
-        rollNumber: res.student.rollNumber,
-        fullName: res.student.fullName,
+        id: studentData.id,
+        rollNumber: studentData.rollNumber,
+        fullName: studentData.fullName,
         email: email.trim(),
         phone: phone.trim(),
-        college: 'Institute of Engineering & Technology',
-        branch: 'CSE',
-        department: 'Computer Science & Engineering',
-        academicYear: '2022-2026',
-        cgpa: 7.0,
-        backlogCount: 0,
+        college: studentData.college || 'Institute of Engineering & Technology',
+        branch: studentData.branch || 'CSE',
+        department: studentData.department || (studentData.branch === 'CSE' ? 'Computer Science & Engineering' : 'Engineering'),
+        academicYear: studentData.academicYear || '2023-2027',
+        cgpa: studentData.cgpa !== undefined ? Number(studentData.cgpa) : 7.0,
+        backlogCount: studentData.backlogCount ?? studentData.activeBacklogs ?? 0,
+        historyOfBacklogs: studentData.historyOfBacklogs || 0,
+        gender: studentData.gender || 'Other',
         isActive: true,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
       student = newStudent;
-      const students = this.getStudents();
-      students.push(newStudent);
-      this.set(STORAGE_KEYS.STUDENTS, students);
+      this.studentsCache = [newStudent, ...this.studentsCache];
+      this.notifyListeners();
     }
 
     const studentId = student?.id || res.student?.id || `std_${cleanRoll}`;
@@ -1454,6 +1457,10 @@ class IronStorage {
     // Remove batch students safely
     const allBatchStudents = this.getBatchStudents().filter((bs) => bs.batchId !== batchId);
     this.set(STORAGE_KEYS.BATCH_STUDENTS, allBatchStudents);
+
+    // Remove evaluations for this batch
+    const evals = this.getEvaluations().filter((e) => e.batchId !== batchId);
+    this.set(STORAGE_KEYS.EVALUATIONS, evals);
 
     // Remove batch
     const batches = this.getBatches().filter((b) => b.id !== batchId);
@@ -1699,7 +1706,8 @@ class IronStorage {
   public submitBatch(
     batchId: string,
     submittedBy: string,
-    allowResubmit: boolean = true
+    allowResubmit: boolean = true,
+    persist: boolean = true
   ): {
     selectedCount: number;
     holdCount: number;
@@ -1931,10 +1939,12 @@ class IronStorage {
     this.set(STORAGE_KEYS.APPLICATIONS, applications);
     this.notifyListeners();
 
-    // Persist to backend D1 / SQLite
-    api.evaluations.submitBatch(batchId).catch((e) =>
-      console.warn('Backend submitBatch warning:', e)
-    );
+    // Persist to backend D1 / SQLite if requested
+    if (persist) {
+      api.evaluations.submitBatch(batchId).catch((e) =>
+        console.warn('Backend submitBatch warning:', e)
+      );
+    }
 
     return { selectedCount, holdCount, rejectedCount, placedCount };
   }
@@ -1949,8 +1959,8 @@ class IronStorage {
     rejectedCount: number;
     placedCount: number;
   }> {
-    // 1. Process local updates
-    const localResult = this.submitBatch(batchId, submittedBy, allowResubmit);
+    // 1. Process local updates without duplicate fire-and-forget
+    const localResult = this.submitBatch(batchId, submittedBy, allowResubmit, false);
 
     // 2. Process authoritative backend submission
     try {

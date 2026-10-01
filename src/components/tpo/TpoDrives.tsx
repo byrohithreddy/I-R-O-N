@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Drive, DriveRound, Application, Student, RoundType } from '../../types';
 import { ironStorage } from '../../services/storage';
+import { calculateIstApplicationDeadline } from '../../utils/date';
 import { StatusBadge } from '../common/StatusBadge';
 import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
@@ -47,7 +48,15 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
   onRefresh,
 }) => {
   const drives = ironStorage.getDrives();
-  const students = useMemo(() => ironStorage.getStudents(), []);
+  const [students, setStudents] = useState<Student[]>(() => ironStorage.getStudents());
+
+  useEffect(() => {
+    const unsubscribe = ironStorage.subscribe(() => {
+      setStudents(ironStorage.getStudents());
+    });
+    return unsubscribe;
+  }, []);
+
   const studentMap = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
 
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
@@ -289,8 +298,11 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
     if (!selectedDrive || !editDriveData.companyName) return;
     setIsSaving(true);
     try {
+      const targetDate = editDriveData.driveDate || selectedDrive.driveDate;
       const dataToSave = {
         ...editDriveData,
+        driveDate: targetDate,
+        applicationDeadline: calculateIstApplicationDeadline(targetDate),
         ...(overrideStatus ? { status: overrideStatus } : {}),
       };
       await ironStorage.saveDriveAsync(dataToSave, selectedDrive.id);
@@ -1092,9 +1104,19 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
               <input
                 type="date"
                 value={editDriveData.driveDate || ''}
-                onChange={(e) => setEditDriveData({ ...editDriveData, driveDate: e.target.value })}
+                onChange={(e) => {
+                  const newDate = e.target.value;
+                  setEditDriveData({
+                    ...editDriveData,
+                    driveDate: newDate,
+                    applicationDeadline: calculateIstApplicationDeadline(newDate),
+                  });
+                }}
                 className="w-full px-3 py-1.5 text-xs font-mono border border-zinc-300 rounded focus:outline-none focus:ring-1 focus:ring-zinc-900"
               />
+              <p className="text-[11px] text-zinc-500 mt-1">
+                Application deadline auto-syncs to 00:00 on this date.
+              </p>
             </div>
             <div>
               <label className="block text-zinc-700 font-medium mb-1">Drive Time</label>

@@ -26,12 +26,30 @@ import {
 interface HrEvaluationViewProps {
   currentUser: User;
   onRefresh: () => void;
+  refreshTick?: number;
 }
 
 export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
   currentUser,
   onRefresh,
+  refreshTick,
 }) => {
+  const [, setStorageTick] = useState(0);
+  const [students, setStudents] = useState<Student[]>(() => ironStorage.getStudents());
+
+  useEffect(() => {
+    const unsubscribe = ironStorage.subscribe(() => {
+      setStudents([...ironStorage.getStudents()]);
+      setStorageTick((t) => t + 1);
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    setStudents([...ironStorage.getStudents()]);
+    setStorageTick((t) => t + 1);
+  }, [refreshTick]);
+
   const drives = ironStorage.getDrives();
   const assignedDrive = drives.find((d) => d.id === currentUser.driveId) || drives[0];
 
@@ -39,15 +57,32 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
   const [selectedRoundId, setSelectedRoundId] = useState<string>(
     rounds.length > 0 ? rounds[0].id : ''
   );
+
+  useEffect(() => {
+    if (!selectedRoundId && rounds.length > 0) {
+      setSelectedRoundId(rounds[0].id);
+    } else if (selectedRoundId && !rounds.some((r) => r.id === selectedRoundId)) {
+      setSelectedRoundId(rounds.length > 0 ? rounds[0].id : '');
+    }
+  }, [rounds, selectedRoundId]);
+
   const selectedRound = rounds.find((r) => r.id === selectedRoundId);
 
   const batches = ironStorage.getBatches(selectedRoundId);
   const [selectedBatchId, setSelectedBatchId] = useState<string>(
     batches.length > 0 ? batches[0].id : ''
   );
+
+  useEffect(() => {
+    if (batches.length > 0 && (!selectedBatchId || !batches.some((b) => b.id === selectedBatchId))) {
+      setSelectedBatchId(batches[0].id);
+    } else if (batches.length === 0 && selectedBatchId) {
+      setSelectedBatchId('');
+    }
+  }, [batches, selectedBatchId]);
+
   const selectedBatch = batches.find((b) => b.id === selectedBatchId);
 
-  const students = useMemo(() => ironStorage.getStudents(), []);
   const studentMap = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
 
   // HR Edit mode for already submitted batches
@@ -108,13 +143,16 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
     const clean = searchTerm.trim().toLowerCase();
     return batchStudents.filter((bs) => {
       const s = studentMap.get(bs.studentId);
-      if (!s) return false;
+      const name = s?.fullName || bs.studentId;
+      const roll = s?.rollNumber || '';
+      const branch = s?.branch || '';
+      const dept = s?.department || '';
       const matchesSearch =
         !clean ||
-        s.fullName.toLowerCase().includes(clean) ||
-        s.rollNumber.toLowerCase().includes(clean) ||
-        s.branch.toLowerCase().includes(clean) ||
-        (s.department && s.department.toLowerCase().includes(clean));
+        name.toLowerCase().includes(clean) ||
+        roll.toLowerCase().includes(clean) ||
+        branch.toLowerCase().includes(clean) ||
+        dept.toLowerCase().includes(clean);
 
       const act = getStudentAction(bs.studentId);
       const matchesAction = actionFilter === 'ALL' || act === actionFilter;

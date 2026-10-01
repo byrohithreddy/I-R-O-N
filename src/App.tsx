@@ -54,12 +54,18 @@ export default function App() {
     // Initial sync on mount
     ironStorage.syncWithBackend().catch(() => {});
 
+    // Periodic background sync interval for live multi-user collaboration (HR <-> Coordinator <-> TPO)
+    const syncInterval = setInterval(() => {
+      ironStorage.syncWithBackend().catch(() => {});
+    }, 4000);
+
     // Subscribe to state updates when mutations occur
     const unsubscribe = ironStorage.subscribe(() => {
       setRefreshTick((prev) => prev + 1);
     });
 
     return () => {
+      clearInterval(syncInterval);
       unsubscribe();
     };
   }, []);
@@ -157,12 +163,12 @@ export default function App() {
 
         {/* COORDINATOR VIEWS */}
         {currentUser && currentUser.role === 'COORDINATOR' && (
-          <CoordinatorView currentUser={currentUser} onRefresh={handleRefresh} />
+          <CoordinatorView currentUser={currentUser} onRefresh={handleRefresh} refreshTick={refreshTick} />
         )}
 
         {/* COMPANY HR VIEWS */}
         {currentUser && currentUser.role === 'HR' && (
-          <HrEvaluationView currentUser={currentUser} onRefresh={handleRefresh} />
+          <HrEvaluationView currentUser={currentUser} onRefresh={handleRefresh} refreshTick={refreshTick} />
         )}
       </main>
 

@@ -64,11 +64,18 @@ class LocalSqliteDatabase implements IronDatabase {
   }
 
   async batch(statements: DbStatement[]): Promise<any[]> {
-    const results: any[] = [];
-    for (const s of statements) {
-      results.push(await s.run());
+    this.db.exec('BEGIN TRANSACTION');
+    try {
+      const results: any[] = [];
+      for (const s of statements) {
+        results.push(await s.run());
+      }
+      this.db.exec('COMMIT');
+      return results;
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
     }
-    return results;
   }
 }
 
@@ -95,6 +102,10 @@ export async function initializeDatabase(db: IronDatabase): Promise<void> {
     db.exec(schemaSql);
   }
 
+  try {
+    db.exec('PRAGMA foreign_keys = ON;');
+  } catch (e) {}
+
   // Keep older local SQLite databases compatible with the authoritative Student Master schema.
   try {
     const columns = await db.prepare('PRAGMA table_info(students)').all<any>();
@@ -103,6 +114,7 @@ export async function initializeDatabase(db: IronDatabase): Promise<void> {
       ['college', "TEXT NOT NULL DEFAULT ''"],
       ['department', "TEXT NOT NULL DEFAULT ''"],
       ['academic_year', "TEXT NOT NULL DEFAULT '2023-2027'"],
+      ['is_active', 'INTEGER NOT NULL DEFAULT 1'],
     ] as Array<[string, string]>) {
       if (!names.has(name)) {
         db.exec(`ALTER TABLE students ADD COLUMN ${name} ${definition}`);
@@ -111,6 +123,24 @@ export async function initializeDatabase(db: IronDatabase): Promise<void> {
   } catch (e) {
     console.warn('Student schema compatibility check failed:', e);
   }
+
+  // Applications table status column compatibility
+  try {
+    const columns = await db.prepare('PRAGMA table_info(applications)').all<any>();
+    const names = new Set(columns.results.map((r: any) => r.name));
+    if (!names.has('status')) {
+      db.exec("ALTER TABLE applications ADD COLUMN status TEXT NOT NULL DEFAULT 'APPLIED'");
+    }
+  } catch (e) {}
+
+  // Users table is_active column compatibility
+  try {
+    const columns = await db.prepare('PRAGMA table_info(users)').all<any>();
+    const names = new Set(columns.results.map((r: any) => r.name));
+    if (!names.has('is_active')) {
+      db.exec('ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1');
+    }
+  } catch (e) {}
 
   // Ensure UNIQUE index on rounds(drive_id, round_number)
   try {

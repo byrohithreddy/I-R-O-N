@@ -1,4 +1,5 @@
 name = "iron-recruitment"
+account_id = "3cf7d439e86849e2b1ebfbcb3033dec0"
 compatibility_date = "2026-09-01"
 pages_build_output_dir = "dist"
 

@@ -26,12 +26,30 @@ import {
 interface CoordinatorViewProps {
   currentUser: User;
   onRefresh: () => void;
+  refreshTick?: number;
 }
 
 export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
   currentUser,
   onRefresh,
+  refreshTick,
 }) => {
+  const [, setStorageTick] = useState(0);
+  const [students, setStudents] = useState<Student[]>(() => ironStorage.getStudents());
+
+  useEffect(() => {
+    const unsubscribe = ironStorage.subscribe(() => {
+      setStudents([...ironStorage.getStudents()]);
+      setStorageTick((t) => t + 1);
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    setStudents([...ironStorage.getStudents()]);
+    setStorageTick((t) => t + 1);
+  }, [refreshTick]);
+
   const drives = ironStorage.getDrives();
   // Coordinator is assigned to their specific drive (Rule 26)
   const assignedDrive = drives.find((d) => d.id === currentUser.driveId) || drives[0];
@@ -40,15 +58,32 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
   const [selectedRoundId, setSelectedRoundId] = useState<string>(
     rounds.length > 0 ? rounds[0].id : ''
   );
+
+  useEffect(() => {
+    if (!selectedRoundId && rounds.length > 0) {
+      setSelectedRoundId(rounds[0].id);
+    } else if (selectedRoundId && !rounds.some((r) => r.id === selectedRoundId)) {
+      setSelectedRoundId(rounds.length > 0 ? rounds[0].id : '');
+    }
+  }, [rounds, selectedRoundId]);
+
   const selectedRound = rounds.find((r) => r.id === selectedRoundId);
 
   const batches = ironStorage.getBatches(selectedRoundId);
   const [activeBatchId, setActiveBatchId] = useState<string>(
     batches.length > 0 ? batches[0].id : ''
   );
+
+  useEffect(() => {
+    if (batches.length > 0 && (!activeBatchId || !batches.some((b) => b.id === activeBatchId))) {
+      setActiveBatchId(batches[0].id);
+    } else if (batches.length === 0 && activeBatchId) {
+      setActiveBatchId('');
+    }
+  }, [batches, activeBatchId]);
+
   const activeBatch = batches.find((b) => b.id === activeBatchId);
 
-  const students = useMemo(() => ironStorage.getStudents(), []);
   const studentMap = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
 
   // Helper to calculate outcomes for a batch
@@ -124,9 +159,11 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
   const roundCandidates = ironStorage.getCandidates(selectedRoundId);
 
   // All batch assignments in this round (Rule 15: Student Batch Uniqueness)
+  // Defensively ensure assignments only count if their batch currently exists in this round
+  const existingBatchIdSet = useMemo(() => new Set(batches.map((b) => b.id)), [batches]);
   const allBatchStudentsInRound = ironStorage
     .getBatchStudents()
-    .filter((bs) => bs.roundId === selectedRoundId);
+    .filter((bs) => bs.roundId === selectedRoundId && existingBatchIdSet.has(bs.batchId));
   const assignedStudentIdsInRound = new Set(allBatchStudentsInRound.map((bs) => bs.studentId));
 
   // Current batch students
@@ -215,7 +252,7 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
     }
   };
 
-  const handleDeleteBatch = () => {
+  const handleDeleteBatch = async () => {
     if (!deleteBatchCandidate) return;
     try {
       ironStorage.deleteBatch(deleteBatchCandidate.id);
@@ -225,6 +262,8 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
         setActiveBatchId(remaining.length > 0 ? remaining[0].id : '');
       }
       onRefresh();
+      // Ensure backend sync is executed immediately
+      await ironStorage.syncWithBackend().catch(console.warn);
     } catch (err: any) {
       alert(`Delete failed: ${err.message}`);
     }
@@ -251,7 +290,23 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
   // Filter available candidates for assignment modal
   const eligibleCandidatesForModal = roundCandidates
     .map((c) => {
-      const s = studentMap.get(c.studentId);
+      const s = studentMap.get(c.studentId) || {
+        id: c.studentId,
+        rollNumber: c.studentId,
+        fullName: 'Student Candidate',
+        email: '',
+        phone: '',
+        college: '',
+        branch: 'General',
+        department: '',
+        academicYear: '',
+        cgpa: 0,
+        backlogCount: 0,
+        historyOfBacklogs: 0,
+        isActive: true,
+        createdAt: '',
+        updatedAt: '',
+      };
       const isAssigned = assignedStudentIdsInRound.has(c.studentId);
       return {
         candidate: c,
@@ -259,14 +314,13 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
         isAssigned,
       };
     })
-    .filter((item) => item.student)
     .filter((item) => {
       if (!assignSearch.trim()) return true;
       const q = assignSearch.toLowerCase();
       return (
-        item.student!.fullName.toLowerCase().includes(q) ||
-        item.student!.rollNumber.toLowerCase().includes(q) ||
-        item.student!.branch.toLowerCase().includes(q)
+        item.student.fullName.toLowerCase().includes(q) ||
+        item.student.rollNumber.toLowerCase().includes(q) ||
+        item.student.branch.toLowerCase().includes(q)
       );
     });
 

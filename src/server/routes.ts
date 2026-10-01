@@ -991,6 +991,7 @@ apiRouter.put('/drives/:id', async (req: Request, res: Response) => {
     const backlogRule = d.backlogRule !== undefined ? (d.backlogRule === 'NOT_APPLICABLE' ? 'NOT_APPLICABLE' : Number(d.backlogRule)) : (existingDrive.backlog_rule ?? 0);
     const eligibleBranches = d.eligibleBranches ? JSON.stringify(d.eligibleBranches) : (existingDrive.eligible_branches ?? '["CSE","IT","ECE"]');
     const driveDate = d.driveDate ?? existingDrive.drive_date ?? new Date().toISOString().split('T')[0];
+    const applicationDeadline = d.applicationDeadline ?? `${driveDate}T00:00:00Z`;
     const driveTime = d.driveTime ?? existingDrive.drive_time ?? '09:00';
     const location = d.location ?? existingDrive.location ?? 'Auditorium';
     const status = d.status ?? existingDrive.status ?? 'UPCOMING';
@@ -1009,6 +1010,7 @@ apiRouter.put('/drives/:id', async (req: Request, res: Response) => {
              drive_date = ?,
              drive_time = ?,
              location = ?,
+             application_deadline = ?,
              status = ?,
              updated_at = datetime('now')
          WHERE id = ?`
@@ -1025,6 +1027,7 @@ apiRouter.put('/drives/:id', async (req: Request, res: Response) => {
         driveDate,
         driveTime,
         location,
+        applicationDeadline,
         status,
         driveId
       )
@@ -1495,6 +1498,8 @@ apiRouter.delete('/batches/:id', authMiddleware, roleMiddleware(['COORDINATOR', 
       return res.status(403).json({ error: 'Rule 21: Cannot delete a frozen/submitted batch' });
     }
 
+    await db.prepare('DELETE FROM batch_students WHERE batch_id = ?').bind(req.params.id).run();
+    await db.prepare('DELETE FROM evaluations WHERE batch_id = ?').bind(req.params.id).run();
     await db.prepare('DELETE FROM batches WHERE id = ?').bind(req.params.id).run();
     res.json({ success: true });
   } catch (err: any) {

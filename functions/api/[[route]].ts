@@ -106,20 +106,67 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
   const secret = env.JWT_SECRET || 'iron_campus_recruitment_jwt_secret_key_2026';
 
-  // JWT Verification Helper
+  function calculateIstApplicationDeadline(driveDate: string): string {
+    if (!driveDate) return new Date().toISOString();
+    const cleanDate = driveDate.trim().split('T')[0];
+    const parts = cleanDate.split('-').map(Number);
+    if (parts.length !== 3 || parts.some(isNaN)) {
+      return `${cleanDate}T00:00:00Z`;
+    }
+    const [year, month, day] = parts;
+    const istDateMs = Date.UTC(year, month - 1, day, 0, 0, 0) - (5.5 * 60 * 60 * 1000);
+    return new Date(istDateMs).toISOString();
+  }
+
+  // Real Web Crypto HMAC-SHA256 JWT Signature Verification
   const getAuthUser = async (): Promise<any | null> => {
     const authHeader = request.headers.get('Authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
-    const token = authHeader.split(' ')[1];
+    const token = authHeader.substring(7);
     const parts = token.split('.');
     if (parts.length !== 3) return null;
+    const [headerB64, payloadB64, sigB64] = parts;
+
     try {
-      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      const enc = new TextEncoder();
+      const data = enc.encode(`${headerB64}.${payloadB64}`);
+      const sigBin = atob(sigB64.replace(/-/g, '+').replace(/_/g, '/'));
+      const sigBytes = new Uint8Array(sigBin.length);
+      for (let i = 0; i < sigBin.length; i++) {
+        sigBytes[i] = sigBin.charCodeAt(i);
+      }
+
+      const key = await crypto.subtle.importKey(
+        'raw',
+        enc.encode(secret),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['verify']
+      );
+
+      const isValid = await crypto.subtle.verify('HMAC', key, sigBytes, data);
+      if (!isValid) return null;
+
+      const payload = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')));
       if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
       return payload;
     } catch {
       return null;
     }
+  };
+
+  const requireAuth = async (allowedRoles?: string[], targetDriveId?: string): Promise<{ user: any; error?: Response }> => {
+    const user = await getAuthUser();
+    if (!user) {
+      return { user: null, error: jsonResponse({ error: 'Unauthorized: Authentication token is missing or invalid' }, 401) };
+    }
+    if (allowedRoles && !allowedRoles.includes(user.role)) {
+      return { user: null, error: jsonResponse({ error: `Forbidden: Role ${user.role} is not permitted for this operation` }, 403) };
+    }
+    if (user.role !== 'TPO' && targetDriveId && user.driveId && user.driveId !== targetDriveId) {
+      return { user: null, error: jsonResponse({ error: 'Forbidden: Cross-drive operations are prohibited' }, 403) };
+    }
+    return { user };
   };
 
   try {
@@ -130,6 +177,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
     // 0. Unified Real-Time Single-Request Sync: GET /api/sync
     if (path === '/api/sync' && method === 'GET') {
+      const auth = await requireAuth();
+      if (auth.error) return auth.error;
+      const currentUser = auth.user;
+
       const [
         studentsRes,
         drivesRes,
@@ -143,14 +194,16 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         placementsRes,
       ] = await Promise.all([
         env.DB.prepare('SELECT * FROM students ORDER BY roll_number ASC LIMIT 3000').all(),
-        env.DB.prepare(`
-          SELECT d.*, 
-                 c.coordinator_username, c.plain_coordinator_password, 
-                 c.hr_username, c.plain_hr_password 
-          FROM drives d 
-          LEFT JOIN drive_credentials c ON d.id = c.drive_id 
-          ORDER BY d.drive_date DESC
-        `).all(),
+        env.DB.prepare(
+          currentUser.role === 'TPO'
+            ? `SELECT d.*, 
+                      c.coordinator_username, c.plain_coordinator_password, 
+                      c.hr_username, c.plain_hr_password 
+               FROM drives d 
+               LEFT JOIN drive_credentials c ON d.id = c.drive_id 
+               ORDER BY d.drive_date DESC`
+            : `SELECT * FROM drives ORDER BY drive_date DESC`
+        ).all(),
         env.DB.prepare('SELECT * FROM rounds ORDER BY round_number ASC').all(),
         env.DB.prepare('SELECT * FROM applications ORDER BY applied_at DESC').all(),
         env.DB.prepare('SELECT * FROM round_candidates').all(),
@@ -170,23 +223,36 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           phone: s.phone,
           college: s.college || 'Institute of Engineering & Technology',
           branch: s.branch,
-          department: s.branch === 'CSE' ? 'Computer Science & Engineering' : s.branch === 'ECE' ? 'Electronics & Communication' : s.branch === 'IT' ? 'Information Technology' : 'Engineering',
-          academicYear: '2022-2026',
+          department: s.department || (s.branch === 'CSE' ? 'Computer Science & Engineering' : s.branch === 'ECE' ? 'Electronics & Communication' : s.branch === 'IT' ? 'Information Technology' : 'Engineering'),
+          academicYear: s.academic_year || '2023-2027',
           cgpa: s.cgpa,
           backlogCount: s.active_backlogs ?? 0,
           activeBacklogs: s.active_backlogs ?? 0,
           historyOfBacklogs: s.history_of_backlogs ?? 0,
           gender: s.gender || 'Other',
-          isActive: true,
+          isActive: Boolean(s.is_active ?? 1),
           createdAt: s.created_at,
           updatedAt: s.updated_at,
         })),
         drives: (drivesRes.results || []).map((d: any) => {
-          const companySlug = (d.company_name || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
-          const coordUser = d.coordinator_username || `coord_${companySlug}`;
-          const coordPass = d.plain_coordinator_password || `coord2026@${companySlug}`;
-          const hrUser = d.hr_username || `hr_${companySlug}`;
-          const hrPass = d.plain_hr_password || `hr2026@${companySlug}`;
+          let branches: string[] = [];
+          try {
+            branches = typeof d.eligible_branches === 'string' ? JSON.parse(d.eligible_branches) : d.eligible_branches || [];
+          } catch {
+            branches = ['CSE', 'IT', 'ECE'];
+          }
+
+          const credentials = currentUser.role === 'TPO' && d.coordinator_username ? {
+            coordinatorUsername: d.coordinator_username,
+            coordinatorPassword: d.plain_coordinator_password,
+            hrUsername: d.hr_username,
+            hrPassword: d.plain_hr_password,
+          } : {
+            coordinatorUsername: '',
+            coordinatorPassword: '',
+            hrUsername: '',
+            hrPassword: '',
+          };
 
           return {
             id: d.id,
@@ -197,7 +263,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
             eligibilityCriteria: d.eligibility_criteria,
             minimumCgpa: d.minimum_cgpa,
             backlogRule: d.backlog_rule,
-            eligibleBranches: JSON.parse(d.eligible_branches || '[]'),
+            eligibleBranches: branches,
             driveDate: d.drive_date,
             driveTime: d.drive_time,
             location: d.location,
@@ -206,12 +272,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
             retentionExpiresAt: d.retention_expires_at,
             createdAt: d.created_at,
             updatedAt: d.updated_at,
-            credentials: {
-              coordinatorUsername: coordUser,
-              coordinatorPassword: coordPass,
-              hrUsername: hrUser,
-              hrPassword: hrPass,
-            },
+            credentials,
           };
         }),
         rounds: (roundsRes.results || []).map((r: any) => ({
@@ -237,7 +298,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           overrideBy: a.override_by,
           overrideAt: a.override_at,
           appliedAt: a.applied_at,
-          status: a.status || 'IN_PROGRESS',
+          status: a.status || 'APPLIED',
         })),
         candidates: (candsRes.results || []).map((c: any) => ({
           id: c.id,
@@ -302,7 +363,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           jobRole: p.job_role,
           package: p.package,
           placedAt: p.placed_at,
+          selectedAt: p.placed_at,
           sourceRoundId: p.source_round_id,
+          finalRoundId: p.source_round_id,
         })),
       });
     }
@@ -653,6 +716,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const backlogRule = d.backlogRule !== undefined ? (d.backlogRule === 'NOT_APPLICABLE' ? 'NOT_APPLICABLE' : Number(d.backlogRule)) : (existingDrive.backlog_rule ?? 0);
       const eligibleBranches = d.eligibleBranches ? JSON.stringify(d.eligibleBranches) : (existingDrive.eligible_branches ?? '["CSE","IT","ECE"]');
       const driveDate = d.driveDate ?? existingDrive.drive_date ?? new Date().toISOString().split('T')[0];
+      const applicationDeadline = d.applicationDeadline ?? `${driveDate}T00:00:00Z`;
       const driveTime = d.driveTime ?? existingDrive.drive_time ?? '09:00';
       const location = d.location ?? existingDrive.location ?? 'Auditorium';
       const status = d.status ?? existingDrive.status ?? 'UPCOMING';
@@ -670,6 +734,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
              drive_date = ?,
              drive_time = ?,
              location = ?,
+             application_deadline = ?,
              status = ?,
              updated_at = datetime('now')
          WHERE id = ?`
@@ -686,6 +751,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           driveDate,
           driveTime,
           location,
+          applicationDeadline,
           status,
           driveId
         )

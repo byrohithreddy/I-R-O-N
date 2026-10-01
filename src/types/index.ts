@@ -21,6 +21,9 @@ export interface Student {
   academicYear: string;
   cgpa: number;
   backlogCount: number;
+  activeBacklogs?: number;
+  historyOfBacklogs?: number;
+  gender?: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -92,8 +95,8 @@ export interface RoundCandidate {
   driveId: string;
   roundId: string;
   studentId: string;
-  applicationId: string;
-  entryStatus: 'ACTIVE' | 'HOLD';
+  applicationId?: string;
+  entryStatus: 'ACTIVE' | 'HOLD' | 'REJECTED' | 'PENDING_EVALUATION';
   sourceRoundId?: string;
   createdAt: string;
 }
@@ -120,7 +123,7 @@ export interface BatchStudent {
   batchId: string;
   roundId: string;
   studentId: string;
-  roundCandidateId: string;
+  roundCandidateId?: string;
   addedBy: string;
   addedAt: string;
 }
@@ -130,9 +133,11 @@ export type EvaluationAction = 'SELECT' | 'HOLD' | 'NONE';
 export interface Evaluation {
   id: string;
   batchId: string;
-  batchStudentId: string;
+  batchStudentId?: string;
   studentId: string;
   action: EvaluationAction;
+  notes?: string;
+  evaluatedBy?: string;
   evaluatedAt?: string;
 }
 
@@ -145,6 +150,8 @@ export interface RoundResult {
   studentId: string;
   batchId: string;
   result: RoundResultType;
+  notes?: string;
+  finalizedBy?: string;
   createdAt: string;
 }
 
@@ -155,8 +162,10 @@ export interface Placement {
   companyName: string;
   jobRole: string;
   package: string;
-  finalRoundId: string;
-  selectedAt: string;
+  finalRoundId?: string;
+  sourceRoundId?: string;
+  selectedAt?: string;
+  placedAt?: string;
   createdAt: string;
   rollNumber?: string;
   studentName?: string;

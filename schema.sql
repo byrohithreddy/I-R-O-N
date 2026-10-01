@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
     drive_id TEXT,
     company_name TEXT,
     full_name TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -32,6 +33,7 @@ CREATE TABLE IF NOT EXISTS students (
     active_backlogs INTEGER NOT NULL DEFAULT 0,
     history_of_backlogs INTEGER NOT NULL DEFAULT 0,
     gender TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -110,6 +112,7 @@ CREATE TABLE IF NOT EXISTS applications (
     override_by TEXT,
     override_at TEXT,
     applied_at TEXT NOT NULL DEFAULT (datetime('now')),
+    status TEXT NOT NULL DEFAULT 'APPLIED' CHECK(status IN ('APPLIED', 'IN_PROGRESS', 'ACTIVE', 'REJECTED', 'FINAL_SELECTED', 'PLACED')),
     UNIQUE(drive_id, student_id),
     FOREIGN KEY (drive_id) REFERENCES drives(id) ON DELETE CASCADE,
     FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
@@ -126,7 +129,7 @@ CREATE TABLE IF NOT EXISTS round_candidates (
     round_id TEXT NOT NULL,
     student_id TEXT NOT NULL,
     application_id TEXT,
-    entry_status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(entry_status IN ('ACTIVE', 'PENDING_EVALUATION', 'DISCONTINUED')),
+    entry_status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(entry_status IN ('ACTIVE', 'HOLD', 'PENDING_EVALUATION', 'DISCONTINUED', 'REJECTED')),
     source_round_id TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(round_id, student_id),
@@ -146,7 +149,7 @@ CREATE TABLE IF NOT EXISTS batches (
     batch_name TEXT NOT NULL,
     capacity_type TEXT NOT NULL CHECK(capacity_type IN ('LIMITED', 'UNLIMITED')),
     capacity INTEGER,
-    status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT', 'ACTIVE', 'SUBMITTED')),
+    status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN', 'DRAFT', 'ACTIVE', 'SUBMITTED')),
     created_by TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     submitted_at TEXT,
