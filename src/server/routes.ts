@@ -293,12 +293,7 @@ apiRouter.get('/sync', authMiddleware, async (req: AuthenticatedRequest, res: Re
           retentionExpiresAt: d.retention_expires_at,
           createdAt: d.created_at,
           updatedAt: d.updated_at,
-          credentials: {
-            coordinatorUsername: coordUser,
-            coordinatorPassword: coordPass,
-            hrUsername: hrUser,
-            hrPassword: hrPass,
-          },
+          credentials: { coordinatorUsername: '', coordinatorPassword: '', hrUsername: '', hrPassword: '' },
         };
       }),
       rounds: roundsRes.results.map((r) => ({
@@ -715,12 +710,7 @@ apiRouter.get('/drives', async (req: Request, res: Response) => {
         retentionExpiresAt: d.retention_expires_at,
         createdAt: d.created_at,
         updatedAt: d.updated_at,
-        credentials: {
-          coordinatorUsername: coordUser,
-          coordinatorPassword: coordPass,
-          hrUsername: hrUser,
-          hrPassword: hrPass,
-        },
+        credentials: { coordinatorUsername: '', coordinatorPassword: '', hrUsername: '', hrPassword: '' },
       };
     });
 
@@ -781,12 +771,7 @@ apiRouter.get('/drives/:id', async (req: Request, res: Response) => {
       retentionExpiresAt: d.retention_expires_at,
       createdAt: d.created_at,
       updatedAt: d.updated_at,
-      credentials: {
-        coordinatorUsername: coordUser,
-        coordinatorPassword: coordPass,
-        hrUsername: hrUser,
-        hrPassword: hrPass,
-      },
+      credentials: { coordinatorUsername: '', coordinatorPassword: '', hrUsername: '', hrPassword: '' },
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -1087,12 +1072,7 @@ apiRouter.put('/drives/:id', authMiddleware, roleMiddleware(['TPO']), async (req
       driveTime,
       location,
       status,
-      credentials: {
-        coordinatorUsername: coordUser,
-        coordinatorPassword: coordPass,
-        hrUsername: hrUser,
-        hrPassword: hrPass,
-      },
+      credentials: { coordinatorUsername: '', coordinatorPassword: '', hrUsername: '', hrPassword: '' },
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
