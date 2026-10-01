@@ -207,7 +207,7 @@ apiRouter.get('/auth/me', authMiddleware, async (req: AuthenticatedRequest, res:
 });
 
 // GET /api/sync - Unified single-request real-time database sync for all clients
-apiRouter.get('/sync', async (req: Request, res: Response) => {
+apiRouter.get('/sync', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
 
@@ -402,7 +402,7 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
 // -------------------------------------------------------------
 
 // GET /api/students (Public or Auth, with pagination / search)
-apiRouter.get('/students', async (req: Request, res: Response) => {
+apiRouter.get('/students', authMiddleware, roleMiddleware(['TPO']), async (req: Request, res: Response) => {
   try {
     const db = getDatabase();
     const search = req.query.search ? String(req.query.search).trim() : '';
@@ -971,7 +971,7 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
 });
 
 // PUT /api/drives/:id (TPO / Admin Update)
-apiRouter.put('/drives/:id', async (req: Request, res: Response) => {
+apiRouter.put('/drives/:id', authMiddleware, roleMiddleware(['TPO']), async (req: Request, res: Response) => {
   try {
     const db = getDatabase();
     const driveId = req.params.id;
@@ -1176,7 +1176,7 @@ apiRouter.delete('/rounds/:id', authMiddleware, roleMiddleware(['TPO']), async (
 // -------------------------------------------------------------
 
 // GET /api/applications/drive/:driveId
-apiRouter.get('/applications/drive/:driveId', async (req: Request, res: Response) => {
+apiRouter.get('/applications/drive/:driveId', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
     const { results } = await db
@@ -1401,7 +1401,7 @@ apiRouter.post('/applications/:id/override', authMiddleware, roleMiddleware(['TP
 // -------------------------------------------------------------
 
 // GET /api/rounds/:roundId/candidates
-apiRouter.get('/rounds/:roundId/candidates', async (req: Request, res: Response) => {
+apiRouter.get('/rounds/:roundId/candidates', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
     const { results } = await db
@@ -1427,7 +1427,7 @@ apiRouter.get('/rounds/:roundId/candidates', async (req: Request, res: Response)
 });
 
 // GET /api/batches/round/:roundId
-apiRouter.get('/batches/round/:roundId', async (req: Request, res: Response) => {
+apiRouter.get('/batches/round/:roundId', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
     const { results } = await db
@@ -1508,7 +1508,7 @@ apiRouter.delete('/batches/:id', authMiddleware, roleMiddleware(['COORDINATOR', 
 });
 
 // GET /api/batches/:id/students
-apiRouter.get('/batches/:id/students', async (req: Request, res: Response) => {
+apiRouter.get('/batches/:id/students', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
     const { results } = await db
@@ -1627,7 +1627,7 @@ apiRouter.post('/batches/:id/remove', authMiddleware, roleMiddleware(['COORDINAT
 // -------------------------------------------------------------
 
 // GET /api/evaluations/batch/:batchId
-apiRouter.get('/evaluations/batch/:batchId', async (req: Request, res: Response) => {
+apiRouter.get('/evaluations/batch/:batchId', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
     const { results } = await db
@@ -1653,7 +1653,7 @@ apiRouter.get('/evaluations/batch/:batchId', async (req: Request, res: Response)
 });
 
 // GET /api/round-results/round/:roundId
-apiRouter.get('/round-results/round/:roundId', async (req: Request, res: Response) => {
+apiRouter.get('/round-results/round/:roundId', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
     const { results } = await db
@@ -1885,7 +1885,7 @@ apiRouter.post('/batches/:id/submit', authMiddleware, roleMiddleware(['HR', 'TPO
 // -------------------------------------------------------------
 
 // GET /api/placements (Public)
-apiRouter.get('/placements', async (req: Request, res: Response) => {
+apiRouter.get('/placements', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
     const driveId = req.query.driveId ? String(req.query.driveId) : null;
