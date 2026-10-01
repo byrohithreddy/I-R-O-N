@@ -169,7 +169,27 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return { user };
   };
 
+  // All management/data endpoints are private by default. The only intentionally
+  // public endpoints are the recruitment catalogue and the student application flow.
+  // This prevents accidental exposure when a new route is added without its own guard.
+  const isPublicRoute = () =>
+    path === '/api/health' ||
+    (path === '/api/auth/login' && method === 'POST') ||
+    (path === '/api/drives' && method === 'GET') ||
+    (/^\\/api\\/drives\\/[a-zA-Z0-9_-]+$/.test(path) && method === 'GET') ||
+    (/^\\/api\\/students\\/by-roll\\/[a-zA-Z0-9_%-]+$/.test(path) && method === 'GET') ||
+    (path === '/api/applications/apply' && method === 'POST');
+
+  const enforcePrivateRoute = async (): Promise<Response | null> => {
+    if (isPublicRoute()) return null;
+    const auth = await requireAuth();
+    return auth.error || null;
+  };
+
   try {
+    const privateRouteError = await enforcePrivateRoute();
+    if (privateRouteError) return privateRouteError;
+
     // Health check
     if (path === '/api/health') {
       return jsonResponse({ status: 'ok', platform: 'cloudflare-pages-d1', timestamp: new Date().toISOString() });
@@ -501,9 +521,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const mapped = results.map((d: any) => {
         const companySlug = (d.company_name || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
         const coordUser = d.coordinator_username || `coord_${companySlug}`;
-        const coordPass = d.plain_coordinator_password || `coord2026@${companySlug}`;
-        const hrUser = d.hr_username || `hr_${companySlug}`;
-        const hrPass = d.plain_hr_password || `hr2026@${companySlug}`;
+        const coordPass = ''; 
+        const hrUser = ''; 
+        const hrPass = '';
 
         return {
           id: d.id,
@@ -523,12 +543,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           retentionExpiresAt: d.retention_expires_at,
           createdAt: d.created_at,
           updatedAt: d.updated_at,
-          credentials: {
-            coordinatorUsername: coordUser,
-            coordinatorPassword: coordPass,
-            hrUsername: hrUser,
-            hrPassword: hrPass,
-          },
+          credentials: { coordinatorUsername: '', coordinatorPassword: '', hrUsername: '', hrPassword: '' },
         };
       });
       return jsonResponse(mapped, 200, {
@@ -540,7 +555,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     if (path === '/api/drives' && method === 'POST') {
       const d = (await request.json()) as any;
       const driveDate = d.driveDate || new Date().toISOString().split('T')[0];
-      const applicationDeadline = `${driveDate}T00:00:00Z`;
+      const applicationDeadline = calculateIstApplicationDeadline(driveDate);
       const driveDateObj = new Date(driveDate);
       const retentionDate = new Date(driveDateObj);
       retentionDate.setMonth(retentionDate.getMonth() + 6);
@@ -663,12 +678,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         applicationDeadline,
         retentionExpiresAt,
         status: d.status || 'UPCOMING',
-        credentials: {
-          coordinatorUsername: coordUser,
-          coordinatorPassword: coordPass,
-          hrUsername: hrUser,
-          hrPassword: hrPass,
-        }
+        credentials: { coordinatorUsername: '', coordinatorPassword: '', hrUsername: '', hrPassword: '' }
       }, 201);
     }
 
@@ -794,6 +804,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // Drive credentials: /api/drives/:id/credentials
     const credMatch = path.match(/^\/api\/drives\/([a-zA-Z0-9_-]+)\/credentials$/);
     if (credMatch && method === 'GET') {
+      const auth = await requireAuth(['TPO'], credMatch[1]);
+      if (auth.error) return auth.error;
       const cred = await env.DB.prepare('SELECT * FROM drive_credentials WHERE drive_id = ?').bind(credMatch[1]).first<any>();
       if (!cred) return jsonResponse({ error: 'Credentials not found' }, 404);
       return jsonResponse({
