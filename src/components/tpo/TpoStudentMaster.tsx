@@ -270,11 +270,11 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
         id: `std_imp_${Date.now()}_${i}`,
         rollNumber: cleanRoll,
         fullName: name.trim(),
-        email: (email || `${cleanRoll.toLowerCase()}@college.edu`).trim(),
+        email: String(email || '').trim(),
         phone: (phone || '').trim(),
-        college: (college || 'Institute of Engineering & Technology').trim(),
-        branch: (branch || 'CSE').trim().toUpperCase(),
-        department: (department || branch || 'Engineering').trim(),
+        college: String(college || '').trim(),
+        branch: String(branch || '').trim().toUpperCase(),
+        department: String(department || '').trim(),
         academicYear: (year || '2023-2027').trim(),
         cgpa,
         backlogCount: backlogs,
@@ -726,7 +726,7 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
               <label className="block text-zinc-700 font-medium mb-1">Batch Year</label>
               <input
                 type="text"
-                value={formData.academicYear || '2022-2026'}
+                value={formData.academicYear || '2023-2027'}
                 onChange={(e) => setFormData({ ...formData, academicYear: e.target.value })}
                 className="w-full px-3 py-1.5 text-xs font-mono border border-zinc-300 rounded focus:outline-none focus:ring-1 focus:ring-zinc-900"
               />
@@ -770,7 +770,7 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
                 type="button"
                 onClick={() => {
                   setImportText(
-                    `Roll Number,Name,Email,Phone,College,Branch,Department,Academic Year,CGPA,Backlogs\n22B81A0511,Nikhil Kumar,nikhil.k@college.edu,+91 98480 99991,Institute of Engineering & Technology,CSE,Computer Science,2022-2026,8.60,0\n22B81A0512,Sravani Reddy,sravani.r@college.edu,+91 98480 99992,Institute of Engineering & Technology,ECE,Electronics,2022-2026,7.85,0\n22B81A0513,Pranay V,pranay.v@college.edu,+91 98480 99993,Institute of Engineering & Technology,IT,Information Tech,2022-2026,6.90,1`
+                    `Roll Number,Name,Email,Phone,College,Branch,Department,Academic Year,CGPA,Backlogs\n22B81A0511,Nikhil Kumar,nikhil.k@college.edu,+91 98480 99991,Institute of Engineering & Technology,CSE,Computer Science,2023-2027,8.60,0\n22B81A0512,Sravani Reddy,sravani.r@college.edu,+91 98480 99992,Institute of Engineering & Technology,ECE,Electronics,2023-2027,7.85,0\n22B81A0513,Pranay V,pranay.v@college.edu,+91 98480 99993,Institute of Engineering & Technology,IT,Information Tech,2023-2027,6.90,1`
                   );
                 }}
                 className="text-[11px] text-zinc-600 hover:text-zinc-950 underline"
@@ -785,7 +785,7 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
                 setImportText(e.target.value);
                 setImportReport(null);
               }}
-              placeholder="22B81A0511,Nikhil Kumar,nikhil.k@college.edu,+91 98480 99991,IET,CSE,Computer Science,2022-2026,8.60,0"
+              placeholder="22B81A0511,Nikhil Kumar,nikhil.k@college.edu,+91 98480 99991,IET,CSE,Computer Science,2023-2027,8.60,0"
               className="w-full px-3 py-2 font-mono text-[11px] border border-zinc-300 rounded focus:outline-none focus:ring-1 focus:ring-zinc-900"
             />
           </div>
