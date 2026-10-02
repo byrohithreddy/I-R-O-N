@@ -1,5 +1,4 @@
 name = "iron-recruitment"
-account_id = "3cf7d439e86849e2b1ebfbcb3033dec0"
 compatibility_date = "2026-09-01"
 pages_build_output_dir = "dist"
 
@@ -11,5 +10,4 @@ database_id = "b943e6ec-265f-464c-8491-0a841b894788"
 migrations_dir = "./migrations"
 
 [vars]
-JWT_SECRET = "iron_campus_recruitment_jwt_secret_key_2026"
 APP_NAME = "IRON"
