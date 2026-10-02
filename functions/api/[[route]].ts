@@ -106,6 +106,20 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
   const secret = env.JWT_SECRET || 'iron_campus_recruitment_jwt_secret_key_2026';
 
+  const BRANCH_DEPT_MAP: Record<string, string> = {
+    CSE: 'Computer Science & Engineering',
+    'CSE-DS': 'CSE (Data Science)',
+    'CSE AIML': 'CSE (AI & Machine Learning)',
+    'CSE-CS': 'CSE (Cyber Security)',
+    CSIT: 'Computer Science & Information Technology',
+    ECE: 'Electronics & Communication',
+    EEE: 'Electrical & Electronics',
+    MECH: 'Mechanical Engineering',
+    CIVIL: 'Civil Engineering',
+    AERO: 'Aeronautical Engineering',
+    MBA: 'Master of Business Administration',
+  };
+
   function calculateIstApplicationDeadline(driveDate: string): string {
     if (!driveDate) return new Date().toISOString();
     const cleanDate = driveDate.trim().split('T')[0];
@@ -223,7 +237,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           phone: s.phone,
           college: s.college || 'Institute of Engineering & Technology',
           branch: s.branch,
-          department: s.department || (s.branch === 'CSE' ? 'Computer Science & Engineering' : s.branch === 'ECE' ? 'Electronics & Communication' : s.branch === 'IT' ? 'Information Technology' : 'Engineering'),
+          department: s.department || BRANCH_DEPT_MAP[s.branch] || 'Engineering',
           academicYear: s.academic_year || '2023-2027',
           cgpa: s.cgpa,
           backlogCount: s.active_backlogs ?? 0,
@@ -934,7 +948,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           s.phone || '',
           s.college || 'Institute of Engineering & Technology',
           s.branch || 'CSE',
-          s.department || s.branch || 'Engineering',
+          s.department || BRANCH_DEPT_MAP[s.branch] || s.branch || 'Engineering',
           s.academicYear || s.academic_year || '2023-2027',
           Number(s.cgpa ?? 0),
           Number(s.activeBacklogs || s.active_backlogs) || 0,

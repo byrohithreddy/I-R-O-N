@@ -40,7 +40,7 @@ interface TpoDrivesProps {
   onRefresh: () => void;
 }
 
-const ALL_BRANCHES = ['CSE', 'CSE-DS', 'CSE AIML', 'CSE-CS', 'CSIT', 'ECE', 'EEE', 'MECH', 'CIVIL', 'MBA'];
+const ALL_BRANCHES = ['CSE', 'CSE-DS', 'CSE AIML', 'CSE-CS', 'CSIT', 'ECE', 'EEE', 'MECH', 'CIVIL', 'AERO', 'MBA'];
 
 export const TpoDrives: React.FC<TpoDrivesProps> = ({
   initialDriveId,

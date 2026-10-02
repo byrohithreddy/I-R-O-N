@@ -12,6 +12,7 @@ import {
   Placement,
   DriveArchive,
   User,
+  BRANCH_DEPARTMENT_MAP,
 } from '../types';
 import JSZip from 'jszip';
 import { api } from './api';
@@ -1296,7 +1297,7 @@ class IronStorage {
         phone: phone.trim(),
         college: studentData.college || 'Institute of Engineering & Technology',
         branch: studentData.branch || 'CSE',
-        department: studentData.department || (studentData.branch === 'CSE' ? 'Computer Science & Engineering' : 'Engineering'),
+        department: studentData.department || BRANCH_DEPARTMENT_MAP[studentData.branch] || 'Engineering',
         academicYear: studentData.academicYear || '2023-2027',
         cgpa: studentData.cgpa !== undefined ? Number(studentData.cgpa) : 7.0,
         backlogCount: studentData.backlogCount ?? studentData.activeBacklogs ?? 0,

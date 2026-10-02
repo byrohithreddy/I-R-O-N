@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import { getDatabase, IronDatabase } from './db';
 import { verifyPassword, signJwt, verifyJwt, JwtPayload, generateSalt, hashPassword } from './crypto';
 import { calculateIstApplicationDeadline } from '../utils/date';
+import { BRANCH_DEPARTMENT_MAP } from '../types';
 
 export const apiRouter = express.Router();
 
@@ -260,7 +261,7 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
         phone: s.phone,
         college: s.college || 'Institute of Engineering & Technology',
         branch: s.branch,
-        department: s.department || (s.branch === 'CSE' ? 'Computer Science & Engineering' : s.branch === 'ECE' ? 'Electronics & Communication' : s.branch === 'IT' ? 'Information Technology' : 'Engineering'),
+        department: s.department || BRANCH_DEPARTMENT_MAP[s.branch] || 'Engineering',
         academicYear: s.academic_year || '2023-2027',
         cgpa: s.cgpa,
         backlogCount: s.active_backlogs ?? 0,
@@ -528,7 +529,7 @@ apiRouter.post('/students', authMiddleware, roleMiddleware(['TPO']), async (req:
         s.phone || '',
         s.college || 'Institute of Engineering & Technology',
         s.branch || 'CSE',
-        s.department || s.branch || 'Engineering',
+        s.department || BRANCH_DEPARTMENT_MAP[s.branch] || s.branch || 'Engineering',
         s.academicYear || s.academic_year || '2023-2027',
         s.cgpa ?? 0,
         s.activeBacklogs ?? s.active_backlogs ?? 0,
@@ -657,7 +658,7 @@ apiRouter.post('/students/bulk-import', authMiddleware, roleMiddleware(['TPO']),
           s.phone || '',
           s.college || 'Institute of Engineering & Technology',
           s.branch || 'CSE',
-          s.department || s.branch || 'Engineering',
+          s.department || BRANCH_DEPARTMENT_MAP[s.branch] || s.branch || 'Engineering',
           s.academicYear || s.academic_year || '2023-2027',
           Number(s.cgpa ?? 0),
           Number(s.backlogCount ?? s.activeBacklogs ?? s.active_backlogs ?? 0),
