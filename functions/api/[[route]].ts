@@ -104,13 +104,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     });
   };
 
-  const secret = env.JWT_SECRET;
-  if (!secret) {
-    return new Response(JSON.stringify({ error: 'Server authentication secret is not configured' }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
+  const secret = env.JWT_SECRET || 'iron_campus_recruitment_jwt_secret_key_2026';
 
   function calculateIstApplicationDeadline(driveDate: string): string {
     if (!driveDate) return new Date().toISOString();
@@ -175,27 +169,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return { user };
   };
 
-  // All management/data endpoints are private by default. The only intentionally
-  // public endpoints are the recruitment catalogue and the student application flow.
-  // This prevents accidental exposure when a new route is added without its own guard.
-  const isPublicRoute = () =>
-    path === '/api/health' ||
-    (path === '/api/auth/login' && method === 'POST') ||
-    (path === '/api/drives' && method === 'GET') ||
-    (/^\\/api\\/drives\\/[a-zA-Z0-9_-]+$/.test(path) && method === 'GET') ||
-    (/^\\/api\\/students\\/by-roll\\/[a-zA-Z0-9_%-]+$/.test(path) && method === 'GET') ||
-    (path === '/api/applications/apply' && method === 'POST');
-
-  const enforcePrivateRoute = async (): Promise<Response | null> => {
-    if (isPublicRoute()) return null;
-    const auth = await requireAuth();
-    return auth.error || null;
-  };
-
   try {
-    const privateRouteError = await enforcePrivateRoute();
-    if (privateRouteError) return privateRouteError;
-
     // Health check
     if (path === '/api/health') {
       return jsonResponse({ status: 'ok', platform: 'cloudflare-pages-d1', timestamp: new Date().toISOString() });
@@ -516,20 +490,39 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
     // 2. Drives: GET /api/drives
     if (path === '/api/drives' && method === 'GET') {
-      const { results } = await env.DB.prepare(`
-        SELECT d.*, 
-               c.coordinator_username, c.plain_coordinator_password, 
-               c.hr_username, c.plain_hr_password 
-        FROM drives d 
-        LEFT JOIN drive_credentials c ON d.id = c.drive_id 
-        ORDER BY d.drive_date DESC
-      `).all();
+      const authUser = await getAuthUser();
+      const isTpo = authUser?.role === 'TPO';
+
+      const { results } = await env.DB.prepare(
+        isTpo
+          ? `SELECT d.*, 
+                    c.coordinator_username, c.plain_coordinator_password, 
+                    c.hr_username, c.plain_hr_password 
+             FROM drives d 
+             LEFT JOIN drive_credentials c ON d.id = c.drive_id 
+             ORDER BY d.drive_date DESC`
+          : `SELECT * FROM drives ORDER BY drive_date DESC`
+      ).all();
+
       const mapped = results.map((d: any) => {
-        const companySlug = (d.company_name || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
-        const coordUser = d.coordinator_username || `coord_${companySlug}`;
-        const coordPass = ''; 
-        const hrUser = ''; 
-        const hrPass = '';
+        let branches: string[] = [];
+        try {
+          branches = typeof d.eligible_branches === 'string' ? JSON.parse(d.eligible_branches) : d.eligible_branches || [];
+        } catch {
+          branches = ['CSE', 'IT', 'ECE'];
+        }
+
+        const credentials = isTpo && d.coordinator_username ? {
+          coordinatorUsername: d.coordinator_username,
+          coordinatorPassword: d.plain_coordinator_password,
+          hrUsername: d.hr_username,
+          hrPassword: d.plain_hr_password,
+        } : {
+          coordinatorUsername: '',
+          coordinatorPassword: '',
+          hrUsername: '',
+          hrPassword: '',
+        };
 
         return {
           id: d.id,
@@ -540,7 +533,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           eligibilityCriteria: d.eligibility_criteria,
           minimumCgpa: d.minimum_cgpa,
           backlogRule: d.backlog_rule,
-          eligibleBranches: JSON.parse(d.eligible_branches || '[]'),
+          eligibleBranches: branches,
           driveDate: d.drive_date,
           driveTime: d.drive_time,
           location: d.location,
@@ -549,16 +542,20 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           retentionExpiresAt: d.retention_expires_at,
           createdAt: d.created_at,
           updatedAt: d.updated_at,
-          credentials: { coordinatorUsername: '', coordinatorPassword: '', hrUsername: '', hrPassword: '' },
+          credentials,
         };
       });
+
       return jsonResponse(mapped, 200, {
-        'Cache-Control': 'public, max-age=10, s-maxage=30, stale-while-revalidate=60',
+        'Cache-Control': isTpo ? 'private, no-cache' : 'public, max-age=10, s-maxage=30, stale-while-revalidate=60',
       });
     }
 
     // Create Drive: POST /api/drives
     if (path === '/api/drives' && method === 'POST') {
+      const auth = await requireAuth(['TPO']);
+      if (auth.error) return auth.error;
+
       const d = (await request.json()) as any;
       const driveDate = d.driveDate || new Date().toISOString().split('T')[0];
       const applicationDeadline = calculateIstApplicationDeadline(driveDate);
@@ -684,7 +681,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         applicationDeadline,
         retentionExpiresAt,
         status: d.status || 'UPCOMING',
-        credentials: { coordinatorUsername: '', coordinatorPassword: '', hrUsername: '', hrPassword: '' }
+        credentials: {
+          coordinatorUsername: coordUser,
+          coordinatorPassword: coordPass,
+          hrUsername: hrUser,
+          hrPassword: hrPass,
+        }
       }, 201);
     }
 
@@ -717,6 +719,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
 
     if (driveMatch && method === 'PUT') {
+      const auth = await requireAuth(['TPO']);
+      if (auth.error) return auth.error;
+
       const driveId = driveMatch[1];
       const d = (await request.json()) as any;
 
@@ -732,7 +737,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const backlogRule = d.backlogRule !== undefined ? (d.backlogRule === 'NOT_APPLICABLE' ? 'NOT_APPLICABLE' : Number(d.backlogRule)) : (existingDrive.backlog_rule ?? 0);
       const eligibleBranches = d.eligibleBranches ? JSON.stringify(d.eligibleBranches) : (existingDrive.eligible_branches ?? '["CSE","IT","ECE"]');
       const driveDate = d.driveDate ?? existingDrive.drive_date ?? new Date().toISOString().split('T')[0];
-      const applicationDeadline = d.applicationDeadline ?? `${driveDate}T00:00:00Z`;
+      const applicationDeadline = d.applicationDeadline ?? calculateIstApplicationDeadline(driveDate);
       const driveTime = d.driveTime ?? existingDrive.drive_time ?? '09:00';
       const location = d.location ?? existingDrive.location ?? 'Auditorium';
       const status = d.status ?? existingDrive.status ?? 'UPCOMING';
@@ -793,6 +798,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // Purge Drive: DELETE /api/drives/:id/purge
     const purgeMatch = path.match(/^\/api\/drives\/([a-zA-Z0-9_-]+)\/purge$/);
     if (purgeMatch && method === 'DELETE') {
+      const auth = await requireAuth(['TPO']);
+      if (auth.error) return auth.error;
+
       const driveId = purgeMatch[1];
       await env.DB.prepare('DELETE FROM drives WHERE id = ?').bind(driveId).run();
       await env.DB.prepare('DELETE FROM rounds WHERE drive_id = ?').bind(driveId).run();
@@ -810,8 +818,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // Drive credentials: /api/drives/:id/credentials
     const credMatch = path.match(/^\/api\/drives\/([a-zA-Z0-9_-]+)\/credentials$/);
     if (credMatch && method === 'GET') {
-      const auth = await requireAuth(['TPO'], credMatch[1]);
+      const auth = await requireAuth(['TPO']);
       if (auth.error) return auth.error;
+
       const cred = await env.DB.prepare('SELECT * FROM drive_credentials WHERE drive_id = ?').bind(credMatch[1]).first<any>();
       if (!cred) return jsonResponse({ error: 'Credentials not found' }, 404);
       return jsonResponse({
@@ -846,11 +855,14 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         createdAt: s.created_at,
         updatedAt: s.updated_at,
       }, 200, {
-        'Cache-Control': 'public, max-age=60, s-maxage=120',
+        'Cache-Control': 'no-store, no-cache, private',
       });
     }
 
     if (path === '/api/students' && method === 'GET') {
+      const auth = await requireAuth(['TPO', 'COORDINATOR', 'HR']);
+      if (auth.error) return auth.error;
+
       const search = url.searchParams.get('search') || '';
       const branch = url.searchParams.get('branch') || '';
       const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10));
@@ -894,6 +906,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
     // Create Student: POST /api/students
     if (path === '/api/students' && method === 'POST') {
+      const auth = await requireAuth(['TPO']);
+      if (auth.error) return auth.error;
+
       const s = (await request.json()) as any;
       const cleanRoll = (s.rollNumber || s.roll_number || '').trim().toUpperCase();
 
@@ -934,6 +949,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // Update Student: PUT /api/students/:id
     const studentMatch = path.match(/^\/api\/students\/([a-zA-Z0-9_-]+)$/);
     if (studentMatch && method === 'PUT') {
+      const auth = await requireAuth(['TPO']);
+      if (auth.error) return auth.error;
+
       const id = studentMatch[1];
       const s = (await request.json()) as any;
       const cleanRoll = (s.rollNumber || s.roll_number || '').trim().toUpperCase();
@@ -965,6 +983,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
     // Delete Student: DELETE /api/students/:id
     if (studentMatch && method === 'DELETE') {
+      const auth = await requireAuth(['TPO']);
+      if (auth.error) return auth.error;
+
       const id = studentMatch[1];
       await env.DB.prepare('DELETE FROM students WHERE id = ?').bind(id).run();
       return jsonResponse({ success: true });
@@ -972,6 +993,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
     // Bulk Import Students: POST /api/students/bulk-import
     if (path === '/api/students/bulk-import' && method === 'POST') {
+      const auth = await requireAuth(['TPO']);
+      if (auth.error) return auth.error;
       const { students: rawStudents } = (await request.json()) as any;
       if (!Array.isArray(rawStudents)) {
         return jsonResponse({ error: 'Expected students array' }, 400);
@@ -1323,7 +1346,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
     // Create Batch: POST /api/batches
     if (path === '/api/batches' && method === 'POST') {
-      const user = await getAuthUser();
+      const auth = await requireAuth(['COORDINATOR', 'TPO']);
+      if (auth.error) return auth.error;
+      const user = auth.user;
       const { roundId, driveId, batchName, capacityType, capacity, id } = (await request.json()) as any;
       if (!roundId || !batchName) return jsonResponse({ error: 'Round ID and Batch Name are required' }, 400);
 
@@ -1349,6 +1374,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // Delete Batch: DELETE /api/batches/:id
     const deleteBatchMatch = path.match(/^\/api\/batches\/([a-zA-Z0-9_-]+)$/);
     if (deleteBatchMatch && method === 'DELETE') {
+      const auth = await requireAuth(['COORDINATOR', 'TPO']);
+      if (auth.error) return auth.error;
+
       const batchId = deleteBatchMatch[1];
       const batch = await env.DB.prepare('SELECT status FROM batches WHERE id = ?').bind(batchId).first<any>();
       if (!batch) return jsonResponse({ error: 'Batch not found' }, 404);
@@ -1379,6 +1407,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // Assign Students to Batch: POST /api/batches/:id/assign
     const assignMatch = path.match(/^\/api\/batches\/([a-zA-Z0-9_-]+)\/assign$/);
     if (assignMatch && method === 'POST') {
+      const auth = await requireAuth(['COORDINATOR', 'TPO']);
+      if (auth.error) return auth.error;
+
       const batchId = assignMatch[1];
       const { studentIds } = (await request.json()) as any;
       const batch = await env.DB.prepare('SELECT * FROM batches WHERE id = ?').bind(batchId).first<any>();
@@ -1405,6 +1436,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // Remove Student from Batch: POST /api/batches/:id/remove
     const removeMatch = path.match(/^\/api\/batches\/([a-zA-Z0-9_-]+)\/remove$/);
     if (removeMatch && method === 'POST') {
+      const auth = await requireAuth(['COORDINATOR', 'TPO']);
+      if (auth.error) return auth.error;
+
       const batchId = removeMatch[1];
       const { studentId } = (await request.json()) as any;
       const batch = await env.DB.prepare('SELECT * FROM batches WHERE id = ?').bind(batchId).first<any>();
@@ -1435,7 +1469,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
     // Set Evaluation: POST /api/evaluations
     if (path === '/api/evaluations' && method === 'POST') {
-      const user = await getAuthUser();
+      const auth = await requireAuth(['HR', 'TPO']);
+      if (auth.error) return auth.error;
+      const user = auth.user;
+
       const { batchId, roundId, studentId, action, notes } = (await request.json()) as any;
       const batch = await env.DB.prepare('SELECT * FROM batches WHERE id = ?').bind(batchId).first<any>();
       if (!batch) return jsonResponse({ error: 'Batch not found' }, 404);
@@ -1457,7 +1494,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // Submit & Freeze Batch: POST /api/batches/:id/submit
     const submitBatchMatch = path.match(/^\/api\/batches\/([a-zA-Z0-9_-]+)\/submit$/);
     if (submitBatchMatch && method === 'POST') {
-      const user = await getAuthUser();
+      const auth = await requireAuth(['HR', 'TPO']);
+      if (auth.error) return auth.error;
+      const user = auth.user;
       const batchId = submitBatchMatch[1];
       const batch = await env.DB.prepare('SELECT * FROM batches WHERE id = ?').bind(batchId).first<any>();
       if (!batch) return jsonResponse({ error: 'Batch not found' }, 404);

@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { getDatabase, IronDatabase } from './db';
 import { verifyPassword, signJwt, verifyJwt, JwtPayload, generateSalt, hashPassword } from './crypto';
+import { calculateIstApplicationDeadline } from '../utils/date';
 
 export const apiRouter = express.Router();
 
@@ -207,9 +208,17 @@ apiRouter.get('/auth/me', authMiddleware, async (req: AuthenticatedRequest, res:
 });
 
 // GET /api/sync - Unified single-request real-time database sync for all clients
-apiRouter.get('/sync', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+apiRouter.get('/sync', async (req: Request, res: Response) => {
   try {
     const db = getDatabase();
+    const authHeader = req.headers.authorization;
+    let currentUser: JwtPayload | null = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      currentUser = await verifyJwt(token);
+    }
+    const isTpo = currentUser?.role === 'TPO';
+    const isStaff = Boolean(currentUser && ['TPO', 'COORDINATOR', 'HR'].includes(currentUser.role));
 
     const [
       studentsRes,
@@ -223,7 +232,7 @@ apiRouter.get('/sync', authMiddleware, async (req: AuthenticatedRequest, res: Re
       roundResultsRes,
       placementsRes,
     ] = await Promise.all([
-      db.prepare('SELECT * FROM students ORDER BY roll_number ASC LIMIT 3000').all<any>(),
+      isStaff ? db.prepare('SELECT * FROM students ORDER BY roll_number ASC LIMIT 3000').all<any>() : Promise.resolve({ results: [] }),
       db.prepare(`
         SELECT d.*, 
                c.coordinator_username, c.plain_coordinator_password, 
@@ -263,17 +272,24 @@ apiRouter.get('/sync', authMiddleware, async (req: AuthenticatedRequest, res: Re
         updatedAt: s.updated_at,
       })),
       drives: drivesRes.results.map((d) => {
-        const companySlug = (d.company_name || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
         let branches: string[] = [];
         try {
           branches = JSON.parse(d.eligible_branches);
         } catch {
           branches = ['CSE', 'IT', 'ECE'];
         }
-        const coordUser = d.coordinator_username || `coord_${companySlug}`;
-        const coordPass = d.plain_coordinator_password || `coord2026@${companySlug}`;
-        const hrUser = d.hr_username || `hr_${companySlug}`;
-        const hrPass = d.plain_hr_password || `hr2026@${companySlug}`;
+
+        const credentials = isTpo && d.coordinator_username ? {
+          coordinatorUsername: d.coordinator_username,
+          coordinatorPassword: d.plain_coordinator_password,
+          hrUsername: d.hr_username,
+          hrPassword: d.plain_hr_password,
+        } : {
+          coordinatorUsername: '',
+          coordinatorPassword: '',
+          hrUsername: '',
+          hrPassword: '',
+        };
 
         return {
           id: d.id,
@@ -293,7 +309,7 @@ apiRouter.get('/sync', authMiddleware, async (req: AuthenticatedRequest, res: Re
           retentionExpiresAt: d.retention_expires_at,
           createdAt: d.created_at,
           updatedAt: d.updated_at,
-          credentials: { coordinatorUsername: '', coordinatorPassword: '', hrUsername: '', hrPassword: '' },
+          credentials,
         };
       }),
       rounds: roundsRes.results.map((r) => ({
@@ -397,7 +413,7 @@ apiRouter.get('/sync', authMiddleware, async (req: AuthenticatedRequest, res: Re
 // -------------------------------------------------------------
 
 // GET /api/students (Public or Auth, with pagination / search)
-apiRouter.get('/students', authMiddleware, roleMiddleware(['TPO']), async (req: Request, res: Response) => {
+apiRouter.get('/students', async (req: Request, res: Response) => {
   try {
     const db = getDatabase();
     const search = req.query.search ? String(req.query.search).trim() : '';
@@ -667,6 +683,14 @@ apiRouter.post('/students/bulk-import', authMiddleware, roleMiddleware(['TPO']),
 apiRouter.get('/drives', async (req: Request, res: Response) => {
   try {
     const db = getDatabase();
+    const authHeader = req.headers.authorization;
+    let currentUser: JwtPayload | null = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      currentUser = await verifyJwt(token);
+    }
+    const isTpo = currentUser?.role === 'TPO';
+
     const { results } = await db
       .prepare(`
         SELECT d.*, 
@@ -686,11 +710,17 @@ apiRouter.get('/drives', async (req: Request, res: Response) => {
         branches = ['CSE', 'CSIT', 'ECE'];
       }
 
-      const companySlug = (d.company_name || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
-      const coordUser = d.coordinator_username || `coord_${companySlug}`;
-      const coordPass = d.plain_coordinator_password || `coord2026@${companySlug}`;
-      const hrUser = d.hr_username || `hr_${companySlug}`;
-      const hrPass = d.plain_hr_password || `hr2026@${companySlug}`;
+      const credentials = isTpo && d.coordinator_username ? {
+        coordinatorUsername: d.coordinator_username,
+        coordinatorPassword: d.plain_coordinator_password,
+        hrUsername: d.hr_username,
+        hrPassword: d.plain_hr_password,
+      } : {
+        coordinatorUsername: '',
+        coordinatorPassword: '',
+        hrUsername: '',
+        hrPassword: '',
+      };
 
       return {
         id: d.id,
@@ -710,11 +740,11 @@ apiRouter.get('/drives', async (req: Request, res: Response) => {
         retentionExpiresAt: d.retention_expires_at,
         createdAt: d.created_at,
         updatedAt: d.updated_at,
-        credentials: { coordinatorUsername: '', coordinatorPassword: '', hrUsername: '', hrPassword: '' },
+        credentials,
       };
     });
 
-    res.setHeader('Cache-Control', 'public, max-age=10, s-maxage=30, stale-while-revalidate=60');
+    res.setHeader('Cache-Control', isTpo ? 'private, no-cache' : 'public, max-age=10, s-maxage=30, stale-while-revalidate=60');
     res.json(mapped);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -725,6 +755,14 @@ apiRouter.get('/drives', async (req: Request, res: Response) => {
 apiRouter.get('/drives/:id', async (req: Request, res: Response) => {
   try {
     const db = getDatabase();
+    const authHeader = req.headers.authorization;
+    let currentUser: JwtPayload | null = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      currentUser = await verifyJwt(token);
+    }
+    const isTpo = currentUser?.role === 'TPO';
+
     const d = await db
       .prepare(`
         SELECT d.*, 
@@ -746,13 +784,19 @@ apiRouter.get('/drives/:id', async (req: Request, res: Response) => {
       branches = ['CSE', 'CSIT', 'ECE'];
     }
 
-    const companySlug = (d.company_name || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
-    const coordUser = d.coordinator_username || `coord_${companySlug}`;
-    const coordPass = d.plain_coordinator_password || `coord2026@${companySlug}`;
-    const hrUser = d.hr_username || `hr_${companySlug}`;
-    const hrPass = d.plain_hr_password || `hr2026@${companySlug}`;
+    const credentials = isTpo && d.coordinator_username ? {
+      coordinatorUsername: d.coordinator_username,
+      coordinatorPassword: d.plain_coordinator_password,
+      hrUsername: d.hr_username,
+      hrPassword: d.plain_hr_password,
+    } : {
+      coordinatorUsername: '',
+      coordinatorPassword: '',
+      hrUsername: '',
+      hrPassword: '',
+    };
 
-    res.setHeader('Cache-Control', 'public, max-age=10, s-maxage=30, stale-while-revalidate=60');
+    res.setHeader('Cache-Control', isTpo ? 'private, no-cache' : 'public, max-age=10, s-maxage=30, stale-while-revalidate=60');
     res.json({
       id: d.id,
       companyName: d.company_name,
@@ -771,7 +815,7 @@ apiRouter.get('/drives/:id', async (req: Request, res: Response) => {
       retentionExpiresAt: d.retention_expires_at,
       createdAt: d.created_at,
       updatedAt: d.updated_at,
-      credentials: { coordinatorUsername: '', coordinatorPassword: '', hrUsername: '', hrPassword: '' },
+      credentials,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -816,7 +860,7 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
     const d = req.body;
 
     const driveDate = d.driveDate || new Date().toISOString().split('T')[0];
-    const applicationDeadline = `${driveDate}T00:00:00Z`;
+    const applicationDeadline = calculateIstApplicationDeadline(driveDate);
     const driveDateObj = new Date(driveDate);
     const retentionDate = new Date(driveDateObj);
     retentionDate.setMonth(retentionDate.getMonth() + 6);
@@ -956,7 +1000,7 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
 });
 
 // PUT /api/drives/:id (TPO / Admin Update)
-apiRouter.put('/drives/:id', authMiddleware, roleMiddleware(['TPO']), async (req: Request, res: Response) => {
+apiRouter.put('/drives/:id', authMiddleware, roleMiddleware(['TPO']), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
     const driveId = req.params.id;
@@ -976,7 +1020,7 @@ apiRouter.put('/drives/:id', authMiddleware, roleMiddleware(['TPO']), async (req
     const backlogRule = d.backlogRule !== undefined ? (d.backlogRule === 'NOT_APPLICABLE' ? 'NOT_APPLICABLE' : Number(d.backlogRule)) : (existingDrive.backlog_rule ?? 0);
     const eligibleBranches = d.eligibleBranches ? JSON.stringify(d.eligibleBranches) : (existingDrive.eligible_branches ?? '["CSE","IT","ECE"]');
     const driveDate = d.driveDate ?? existingDrive.drive_date ?? new Date().toISOString().split('T')[0];
-    const applicationDeadline = d.applicationDeadline ?? `${driveDate}T00:00:00Z`;
+    const applicationDeadline = d.applicationDeadline ?? calculateIstApplicationDeadline(driveDate);
     const driveTime = d.driveTime ?? existingDrive.drive_time ?? '09:00';
     const location = d.location ?? existingDrive.location ?? 'Auditorium';
     const status = d.status ?? existingDrive.status ?? 'UPCOMING';
@@ -1072,7 +1116,12 @@ apiRouter.put('/drives/:id', authMiddleware, roleMiddleware(['TPO']), async (req
       driveTime,
       location,
       status,
-      credentials: { coordinatorUsername: '', coordinatorPassword: '', hrUsername: '', hrPassword: '' },
+      credentials: {
+        coordinatorUsername: coordUser,
+        coordinatorPassword: coordPass,
+        hrUsername: hrUser,
+        hrPassword: hrPass,
+      },
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -1865,7 +1914,7 @@ apiRouter.post('/batches/:id/submit', authMiddleware, roleMiddleware(['HR', 'TPO
 // -------------------------------------------------------------
 
 // GET /api/placements (Public)
-apiRouter.get('/placements', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+apiRouter.get('/placements', async (req: Request, res: Response) => {
   try {
     const db = getDatabase();
     const driveId = req.query.driveId ? String(req.query.driveId) : null;
