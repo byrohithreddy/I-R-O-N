@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Drive, DriveRound, Application, RoundCandidate, Placement, Student } from '../../types';
 import { ironStorage } from '../../services/storage';
-import { ArrowLeft, ArrowDown, Users, CheckCircle2, XCircle, Clock, Award, FileSpreadsheet, Download } from 'lucide-react';
-import { exportApplicationsToExcel, exportSelectedStudentsToExcel } from '../../services/excelExport';
+import { ArrowLeft, ArrowDown, CheckCircle2, Download } from 'lucide-react';
+import { exportSelectedStudentsToExcel } from '../../services/excelExport';
 
 interface TpoDriveAnalyticsProps {
   initialDriveId?: string;
@@ -44,22 +44,164 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
   const placementRate =
     applications.length > 0 ? ((finalPlacedCount / applications.length) * 100).toFixed(1) : '0';
 
-  const handleExportApplications = () => {
+  const downloadCsv = (
+    filename: string,
+    rows: { fullName: string; branch: string; phone: string; email: string }[]
+  ) => {
+    // Only serial number, Full name, Branch, Mobile number, email address
+    const headers = ['Serial Number', 'Full Name', 'Branch', 'Mobile Number', 'Email Address'];
+
+    const escapeCell = (val: string | number | undefined | null) => {
+      const str = val === undefined || val === null ? '' : String(val).trim();
+      if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const csvRows = rows.map((r, idx) => [
+      idx + 1,
+      r.fullName,
+      r.branch,
+      r.phone,
+      r.email,
+    ]);
+
+    const csvContent = [
+      headers.map(escapeCell).join(','),
+      ...csvRows.map((row) => row.map(escapeCell).join(',')),
+    ].join('\r\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadTotalApplicationsCsv = () => {
     if (applications.length === 0) {
       setExportFeedback('No applications found to export for this drive.');
       setTimeout(() => setExportFeedback(null), 3000);
       return;
     }
-    exportApplicationsToExcel({
-      drive,
-      applications,
-      students,
-      rounds,
-      candidates,
-      results,
-      placements,
+
+    const rows = applications.map((app) => {
+      const s = studentMap.get(app.studentId);
+      return {
+        fullName: s?.fullName || 'Student',
+        branch: s?.branch || '',
+        phone: app.applicationPhone || s?.phone || '',
+        email: app.applicationEmail || s?.email || '',
+      };
     });
-    setExportFeedback(`Exported ${applications.length} applications to Excel.`);
+
+    const companySlug = (drive.companyName || 'drive').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `${companySlug}_Total_Applications.csv`;
+    downloadCsv(filename, rows);
+    setExportFeedback(`Downloaded ${filename} (${rows.length} applications).`);
+    setTimeout(() => setExportFeedback(null), 3500);
+  };
+
+  const getSelectedAndHoldStudentsForRound = (round: DriveRound, index: number) => {
+    const studentIdSet = new Set<string>();
+
+    // 1. From round results for this round (result === 'SELECTED' or 'HOLD')
+    results
+      .filter((r) => r.roundId === round.id && (r.result === 'SELECTED' || r.result === 'HOLD'))
+      .forEach((r) => studentIdSet.add(r.studentId));
+
+    // 2. From evaluations in batches of this round (action === 'SELECT' or 'HOLD')
+    const roundBatches = ironStorage.getBatches(round.id);
+    const roundBatchIds = new Set(roundBatches.map((b) => b.id));
+    const allEvals = ironStorage.getEvaluations();
+    allEvals
+      .filter((e) => roundBatchIds.has(e.batchId) && (e.action === 'SELECT' || e.action === 'HOLD'))
+      .forEach((e) => studentIdSet.add(e.studentId));
+
+    // 3. From candidates promoted to the next round with sourceRoundId matching this round
+    candidates
+      .filter(
+        (c) =>
+          c.sourceRoundId === round.id &&
+          (c.entryStatus === 'ACTIVE' || c.entryStatus === 'HOLD' || !c.entryStatus)
+      )
+      .forEach((c) => studentIdSet.add(c.studentId));
+
+    // 4. From candidates in next round if sourceRoundId wasn't explicitly logged
+    const nextRound = rounds[index + 1];
+    if (nextRound) {
+      candidates
+        .filter((c) => c.roundId === nextRound.id)
+        .forEach((c) => studentIdSet.add(c.studentId));
+    }
+
+    // 5. If this is the final round, include placed students
+    if (round.isFinalRound || index === rounds.length - 1) {
+      placements
+        .filter((p) => p.driveId === drive.id && (!p.finalRoundId || p.finalRoundId === round.id))
+        .forEach((p) => studentIdSet.add(p.studentId));
+    }
+
+    const studentRows: { fullName: string; branch: string; phone: string; email: string }[] = [];
+    studentIdSet.forEach((sid) => {
+      const s = studentMap.get(sid);
+      const app = applications.find((a) => a.studentId === sid);
+      const plc = placements.find((p) => p.studentId === sid);
+
+      studentRows.push({
+        fullName: s?.fullName || plc?.studentName || 'Student',
+        branch: s?.branch || plc?.branch || '',
+        phone: app?.applicationPhone || s?.phone || '',
+        email: app?.applicationEmail || s?.email || '',
+      });
+    });
+
+    return studentRows;
+  };
+
+  const handleDownloadRoundSelectedCsv = (round: DriveRound, index: number) => {
+    const rows = getSelectedAndHoldStudentsForRound(round, index);
+    if (rows.length === 0) {
+      setExportFeedback(`No selected or promoted candidates found yet for ${round.roundName}.`);
+      setTimeout(() => setExportFeedback(null), 3000);
+      return;
+    }
+
+    const companySlug = (drive.companyName || 'drive').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const roundSlug = (round.roundName || `Round_${index + 1}`).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `${companySlug}_${roundSlug}_Selected_Promoted_Students.csv`;
+    downloadCsv(filename, rows);
+    setExportFeedback(`Downloaded ${filename} (${rows.length} students).`);
+    setTimeout(() => setExportFeedback(null), 3500);
+  };
+
+  const handleDownloadFinalPlacedCsv = () => {
+    if (placements.length === 0) {
+      setExportFeedback('No final placed offers recorded yet for this drive.');
+      setTimeout(() => setExportFeedback(null), 3000);
+      return;
+    }
+
+    const rows = placements.map((p) => {
+      const s = studentMap.get(p.studentId);
+      const app = applications.find((a) => a.studentId === p.studentId);
+      return {
+        fullName: p.studentName || s?.fullName || 'Student',
+        branch: p.branch || s?.branch || '',
+        phone: app?.applicationPhone || s?.phone || '',
+        email: app?.applicationEmail || s?.email || '',
+      };
+    });
+
+    const companySlug = (drive.companyName || 'drive').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `${companySlug}_Final_Placed_Students.csv`;
+    downloadCsv(filename, rows);
+    setExportFeedback(`Downloaded ${filename} (${rows.length} students).`);
     setTimeout(() => setExportFeedback(null), 3500);
   };
 
@@ -131,18 +273,8 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
             </select>
           </div>
 
-          {/* Excel Export Action Buttons */}
+          {/* Excel Export Action Button (Selected Only) */}
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleExportApplications}
-              className="px-3 py-1.5 text-xs font-medium bg-white hover:bg-zinc-50 text-zinc-900 border border-zinc-300 rounded flex items-center gap-1.5 shadow-xs transition-colors"
-              title="Download all registered applications for this drive in Excel (.xlsx)"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Export Applications ({applications.length})</span>
-            </button>
-
             <button
               type="button"
               onClick={handleExportSelected}
@@ -213,13 +345,13 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
         <div>
           <h2 className="text-sm font-bold text-zinc-950">Recruitment Funnel Progression</h2>
           <p className="text-xs text-zinc-500 mt-0.5">
-            Attrition and stage-wise candidate throughput across evaluation checkpoints.
+            Attrition and stage-wise candidate throughput across evaluation checkpoints. Download candidate CSVs at any stage.
           </p>
         </div>
 
         <div className="space-y-3 pt-2">
           {/* Stage 0: Applications */}
-          <div className="flex items-center gap-4 text-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 text-xs">
             <div className="w-36 font-semibold text-zinc-900 truncate">Total Applications</div>
             <div className="flex-1 bg-zinc-100 rounded h-7 overflow-hidden relative">
               <div
@@ -230,6 +362,16 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
                 {applications.length}
               </span>
             </div>
+            <button
+              type="button"
+              onClick={handleDownloadTotalApplicationsCsv}
+              disabled={applications.length === 0}
+              className="shrink-0 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:text-zinc-950 disabled:text-zinc-400 bg-white hover:bg-zinc-50 disabled:bg-zinc-100 border border-zinc-300 disabled:border-zinc-200 rounded flex items-center gap-1.5 transition-colors shadow-xs"
+              title="Download total registered applications as CSV"
+            >
+              <Download className="w-3.5 h-3.5 text-zinc-600" />
+              <span>Download CSV ({applications.length})</span>
+            </button>
           </div>
 
           <div className="flex justify-center -my-1 text-zinc-400">
@@ -239,14 +381,14 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
           {/* Each Round Stage */}
           {rounds.map((rnd, idx) => {
             const roundCandidates = candidates.filter((c) => c.roundId === rnd.id);
-            const activeCount = roundCandidates.filter((c) => c.entryStatus === 'ACTIVE').length;
             const holdCount = roundCandidates.filter((c) => c.entryStatus === 'HOLD').length;
             const maxBase = applications.length || 1;
             const widthPct = Math.min(100, Math.max(8, (roundCandidates.length / maxBase) * 100));
+            const selectedStudents = getSelectedAndHoldStudentsForRound(rnd, idx);
 
             return (
               <React.Fragment key={rnd.id}>
-                <div className="flex items-center gap-4 text-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 text-xs">
                   <div className="w-36">
                     <div className="font-semibold text-zinc-900 truncate">{rnd.roundName}</div>
                     <div className="text-[10px] text-zinc-400">{rnd.roundType}</div>
@@ -265,6 +407,16 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
                       )}
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadRoundSelectedCsv(rnd, idx)}
+                    disabled={selectedStudents.length === 0}
+                    className="shrink-0 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:text-emerald-900 disabled:text-zinc-400 bg-white hover:bg-emerald-50/50 disabled:bg-zinc-100 border border-emerald-300 disabled:border-zinc-200 rounded flex items-center gap-1.5 transition-colors shadow-xs"
+                    title={`Download students selected / on HOLD in ${rnd.roundName} as CSV`}
+                  >
+                    <Download className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Download CSV ({selectedStudents.length})</span>
+                  </button>
                 </div>
 
                 {idx < rounds.length - 1 && (
@@ -281,7 +433,7 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
           </div>
 
           {/* Final Placements Stage */}
-          <div className="flex items-center gap-4 text-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 text-xs">
             <div className="w-36 font-semibold text-emerald-950 truncate">Final Placed Offers</div>
             <div className="flex-1 bg-zinc-100 rounded h-7 overflow-hidden relative">
               <div
@@ -294,6 +446,16 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
                 {finalPlacedCount} Placed Students
               </span>
             </div>
+            <button
+              type="button"
+              onClick={handleDownloadFinalPlacedCsv}
+              disabled={finalPlacedCount === 0}
+              className="shrink-0 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:text-emerald-900 disabled:text-zinc-400 bg-white hover:bg-emerald-50/50 disabled:bg-zinc-100 border border-emerald-300 disabled:border-zinc-200 rounded flex items-center gap-1.5 transition-colors shadow-xs"
+              title="Download final placed offers as CSV"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Download CSV ({finalPlacedCount})</span>
+            </button>
           </div>
         </div>
       </div>
