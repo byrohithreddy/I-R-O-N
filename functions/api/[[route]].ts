@@ -189,11 +189,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       return jsonResponse({ status: 'ok', platform: 'cloudflare-pages-d1', timestamp: new Date().toISOString() });
     }
 
-    // 0. Unified Real-Time Single-Request Sync: GET /api/sync
+    // 0. Unified Real-Time Single-Request Sync: GET /api/sync (Public Visitors & Authenticated Users)
     if (path === '/api/sync' && method === 'GET') {
-      const auth = await requireAuth();
-      if (auth.error) return auth.error;
-      const currentUser = auth.user;
+      const currentUser = await getAuthUser();
+      const isTpo = currentUser?.role === 'TPO';
+      const isStaff = Boolean(currentUser && ['TPO', 'COORDINATOR', 'HR'].includes(currentUser.role));
 
       const [
         studentsRes,
@@ -207,9 +207,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         roundResultsRes,
         placementsRes,
       ] = await Promise.all([
-        env.DB.prepare('SELECT * FROM students ORDER BY roll_number ASC LIMIT 3000').all(),
+        isStaff ? env.DB.prepare('SELECT * FROM students ORDER BY roll_number ASC LIMIT 3000').all() : Promise.resolve({ results: [] }),
         env.DB.prepare(
-          currentUser.role === 'TPO'
+          isTpo
             ? `SELECT d.*, 
                       c.coordinator_username, c.plain_coordinator_password, 
                       c.hr_username, c.plain_hr_password 
@@ -256,7 +256,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
             branches = ['CSE', 'IT', 'ECE'];
           }
 
-          const credentials = currentUser.role === 'TPO' && d.coordinator_username ? {
+          const credentials = isTpo && d.coordinator_username ? {
             coordinatorUsername: d.coordinator_username,
             coordinatorPassword: d.plain_coordinator_password,
             hrUsername: d.hr_username,
