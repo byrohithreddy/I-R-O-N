@@ -189,11 +189,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       return jsonResponse({ status: 'ok', platform: 'cloudflare-pages-d1', timestamp: new Date().toISOString() });
     }
 
-    // 0. Unified Real-Time Single-Request Sync: GET /api/sync
+    // 0. Unified Real-Time Single-Request Sync: GET /api/sync (Public & Staff compatible)
     if (path === '/api/sync' && method === 'GET') {
-      const auth = await requireAuth();
-      if (auth.error) return auth.error;
-      const currentUser = auth.user;
+      const currentUser = await getAuthUser();
+      const isTpo = currentUser?.role === 'TPO';
+      const isStaff = Boolean(currentUser && ['TPO', 'COORDINATOR', 'HR'].includes(currentUser.role));
 
       const [
         studentsRes,
@@ -207,24 +207,24 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         roundResultsRes,
         placementsRes,
       ] = await Promise.all([
-        env.DB.prepare('SELECT * FROM students ORDER BY roll_number ASC LIMIT 3000').all(),
+        isStaff ? env.DB.prepare('SELECT * FROM students ORDER BY roll_number ASC LIMIT 3000').all() : Promise.resolve({ results: [] }),
         env.DB.prepare(
-          currentUser.role === 'TPO'
+          isTpo
             ? `SELECT d.*, 
                       c.coordinator_username, c.plain_coordinator_password, 
                       c.hr_username, c.plain_hr_password 
                FROM drives d 
                LEFT JOIN drive_credentials c ON d.id = c.drive_id 
                ORDER BY d.drive_date DESC`
-            : `SELECT * FROM drives ORDER BY drive_date DESC`
-        ).all(),
+            : `SELECT * FROM drives WHERE status != 'DRAFT' OR ? = 1 ORDER BY drive_date DESC`
+        ).bind(isStaff ? 1 : 0).all(),
         env.DB.prepare('SELECT * FROM rounds ORDER BY round_number ASC').all(),
-        env.DB.prepare('SELECT * FROM applications ORDER BY applied_at DESC').all(),
-        env.DB.prepare('SELECT * FROM round_candidates').all(),
-        env.DB.prepare('SELECT * FROM batches ORDER BY created_at ASC').all(),
-        env.DB.prepare('SELECT * FROM batch_students').all(),
-        env.DB.prepare('SELECT * FROM evaluations').all(),
-        env.DB.prepare('SELECT * FROM round_results').all(),
+        isStaff ? env.DB.prepare('SELECT * FROM applications ORDER BY applied_at DESC').all() : Promise.resolve({ results: [] }),
+        isStaff ? env.DB.prepare('SELECT * FROM round_candidates').all() : Promise.resolve({ results: [] }),
+        isStaff ? env.DB.prepare('SELECT * FROM batches ORDER BY created_at ASC').all() : Promise.resolve({ results: [] }),
+        isStaff ? env.DB.prepare('SELECT * FROM batch_students').all() : Promise.resolve({ results: [] }),
+        isStaff ? env.DB.prepare('SELECT * FROM evaluations').all() : Promise.resolve({ results: [] }),
+        isStaff ? env.DB.prepare('SELECT * FROM round_results').all() : Promise.resolve({ results: [] }),
         env.DB.prepare('SELECT * FROM placements ORDER BY placed_at DESC').all(),
       ]);
 
