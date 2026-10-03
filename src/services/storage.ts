@@ -32,10 +32,29 @@ const STORAGE_KEYS = {
   ARCHIVES: 'iron_archives_v1',
 };
 
-// IRON v2.0 is 100% backend-authoritative with Cloudflare D1 / SQLite.
-// No mock/demo records are seeded in client runtime.
+// Student Master DB and Recruitment Drives are backend-authoritative in Cloudflare D1.
+const MOCK_DRIVE_IDS = new Set(['drv_google', 'drv_tcs', 'drv_microsoft', 'drv_accenture']);
+const MOCK_COMPANY_NAMES = new Set([
+  'Google Cloud',
+  'Google Cloud India',
+  'TCS Digital',
+  'Tata Consultancy Services',
+  'Microsoft',
+  'Microsoft IDC',
+  'Accenture',
+]);
 
-// Helper functions for LocalStorage cache & Real-Time Cloudflare D1 Backend Sync
+const INITIAL_DRIVES: Drive[] = [];
+
+const INITIAL_ROUNDS: DriveRound[] = [];
+
+const INITIAL_APPLICATIONS: Application[] = [];
+const INITIAL_CANDIDATES: RoundCandidate[] = [];
+const INITIAL_BATCHES: Batch[] = [];
+const INITIAL_BATCH_STUDENTS: BatchStudent[] = [];
+const INITIAL_PLACEMENTS: Placement[] = [];
+
+// Helper functions for LocalStorage persistence & Real-Time Cloudflare D1 Backend Sync
 class IronStorage {
   private isSyncing = false;
   private syncListeners: Set<() => void> = new Set();
@@ -186,15 +205,16 @@ class IronStorage {
   }
 
   public init(forceReset = false): void {
-    // Student Master DB is authoritative in the backend. Never seed or restore
-    // student records from browser storage, including stale data from older builds.
+    // 1. Student Master DB is authoritative in the backend.
     this.memoryCache.delete('iron_students_v1');
     try {
       localStorage.removeItem('iron_students_v1');
     } catch {}
 
-    // Keep storage initialization clean with empty arrays.
-    // Authoritative state is synchronized from the backend DB.
+    // 2. Recruitment Drives & related records are authoritative in Cloudflare D1.
+    // Purge any legacy sample mock drives that may exist in browser localStorage.
+    this.purgeMockData();
+
     if (forceReset || !localStorage.getItem(STORAGE_KEYS.DRIVES)) {
       this.set(STORAGE_KEYS.DRIVES, []);
       this.set(STORAGE_KEYS.ROUNDS, []);
@@ -206,6 +226,55 @@ class IronStorage {
       this.set(STORAGE_KEYS.ROUND_RESULTS, []);
       this.set(STORAGE_KEYS.PLACEMENTS, []);
       this.set(STORAGE_KEYS.ARCHIVES, []);
+    }
+  }
+
+  private purgeMockData(): void {
+    try {
+      const storedDrives = this.get<Drive[]>(STORAGE_KEYS.DRIVES, []);
+      const cleanDrives = storedDrives.filter(
+        (d) => !MOCK_DRIVE_IDS.has(d.id) && !MOCK_COMPANY_NAMES.has(d.companyName)
+      );
+      this.set(STORAGE_KEYS.DRIVES, cleanDrives);
+
+      const storedRounds = this.get<DriveRound[]>(STORAGE_KEYS.ROUNDS, []);
+      this.set(
+        STORAGE_KEYS.ROUNDS,
+        storedRounds.filter((r) => !MOCK_DRIVE_IDS.has(r.driveId))
+      );
+
+      const storedApps = this.get<Application[]>(STORAGE_KEYS.APPLICATIONS, []);
+      this.set(
+        STORAGE_KEYS.APPLICATIONS,
+        storedApps.filter((a) => !MOCK_DRIVE_IDS.has(a.driveId))
+      );
+
+      const storedCands = this.get<RoundCandidate[]>(STORAGE_KEYS.CANDIDATES, []);
+      this.set(
+        STORAGE_KEYS.CANDIDATES,
+        storedCands.filter((c) => !MOCK_DRIVE_IDS.has(c.driveId))
+      );
+
+      const storedBatches = this.get<Batch[]>(STORAGE_KEYS.BATCHES, []);
+      const cleanBatches = storedBatches.filter((b) => !MOCK_DRIVE_IDS.has(b.driveId));
+      const cleanBatchIds = new Set(cleanBatches.map((b) => b.id));
+      this.set(STORAGE_KEYS.BATCHES, cleanBatches);
+
+      const storedBatchStudents = this.get<BatchStudent[]>(STORAGE_KEYS.BATCH_STUDENTS, []);
+      this.set(
+        STORAGE_KEYS.BATCH_STUDENTS,
+        storedBatchStudents.filter((bs) => cleanBatchIds.has(bs.batchId))
+      );
+
+      const storedPlacements = this.get<Placement[]>(STORAGE_KEYS.PLACEMENTS, []);
+      this.set(
+        STORAGE_KEYS.PLACEMENTS,
+        storedPlacements.filter(
+          (p) => !MOCK_DRIVE_IDS.has(p.driveId) && !MOCK_COMPANY_NAMES.has(p.companyName)
+        )
+      );
+    } catch (e) {
+      console.warn('Error purging mock data from localStorage:', e);
     }
   }
 
@@ -300,18 +369,20 @@ class IronStorage {
 
   public getDrives(): Drive[] {
     const raw = this.get<Drive[]>(STORAGE_KEYS.DRIVES, []);
-    return raw.map((d) => {
-      const companySlug = (d.companyName || 'drive')
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, '');
-      const credentials: DriveCredentials = {
-        coordinatorUsername: d.credentials?.coordinatorUsername || `coord_${companySlug}`,
-        coordinatorPassword: d.credentials?.coordinatorPassword || `coord2026@${companySlug}`,
-        hrUsername: d.credentials?.hrUsername || `hr_${companySlug}`,
-        hrPassword: d.credentials?.hrPassword || `hr2026@${companySlug}`,
-      };
-      return { ...d, credentials };
-    });
+    return raw
+      .filter((d) => !MOCK_DRIVE_IDS.has(d.id) && !MOCK_COMPANY_NAMES.has(d.companyName))
+      .map((d) => {
+        const companySlug = (d.companyName || 'drive')
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, '');
+        const credentials: DriveCredentials = {
+          coordinatorUsername: d.credentials?.coordinatorUsername || `coord_${companySlug}`,
+          coordinatorPassword: d.credentials?.coordinatorPassword || `coord2026@${companySlug}`,
+          hrUsername: d.credentials?.hrUsername || `hr_${companySlug}`,
+          hrPassword: d.credentials?.hrPassword || `hr2026@${companySlug}`,
+        };
+        return { ...d, credentials };
+      });
   }
 
   public getDriveById(id: string): Drive | undefined {
@@ -485,12 +556,13 @@ class IronStorage {
   // --- ROUNDS ---
   public getRounds(driveId?: string): DriveRound[] {
     const rounds = this.get<DriveRound[]>(STORAGE_KEYS.ROUNDS, []);
+    const filtered = rounds.filter((r) => !MOCK_DRIVE_IDS.has(r.driveId));
     if (driveId) {
-      return rounds
+      return filtered
         .filter((r) => r.driveId === driveId)
         .sort((a, b) => a.roundNumber - b.roundNumber);
     }
-    return rounds;
+    return filtered;
   }
 
   public getRoundById(id: string): DriveRound | undefined {
@@ -593,10 +665,11 @@ class IronStorage {
 
   public getApplications(driveId?: string): Application[] {
     const apps = this.get<Application[]>(STORAGE_KEYS.APPLICATIONS, []);
+    const filtered = apps.filter((a) => !MOCK_DRIVE_IDS.has(a.driveId));
     if (driveId) {
-      return apps.filter((a) => a.driveId === driveId);
+      return filtered.filter((a) => a.driveId === driveId);
     }
-    return apps;
+    return filtered;
   }
 
   public applyToDrive(
@@ -812,19 +885,21 @@ class IronStorage {
   // --- CANDIDATES & ROUND PROGRESSION ---
   public getCandidates(roundId?: string): RoundCandidate[] {
     const cands = this.get<RoundCandidate[]>(STORAGE_KEYS.CANDIDATES, []);
+    const filtered = cands.filter((c) => !MOCK_DRIVE_IDS.has(c.driveId));
     if (roundId) {
-      return cands.filter((c) => c.roundId === roundId);
+      return filtered.filter((c) => c.roundId === roundId);
     }
-    return cands;
+    return filtered;
   }
 
   // --- BATCHES ---
   public getBatches(roundId?: string): Batch[] {
     const batches = this.get<Batch[]>(STORAGE_KEYS.BATCHES, []);
+    const filtered = batches.filter((b) => !MOCK_DRIVE_IDS.has(b.driveId));
     if (roundId) {
-      return batches.filter((b) => b.roundId === roundId);
+      return filtered.filter((b) => b.roundId === roundId);
     }
-    return batches;
+    return filtered;
   }
 
   public getBatchById(id: string): Batch | undefined {
@@ -1416,10 +1491,13 @@ class IronStorage {
   // --- PLACEMENTS ---
   public getPlacements(driveId?: string): Placement[] {
     const list = this.get<Placement[]>(STORAGE_KEYS.PLACEMENTS, []);
+    const filtered = list.filter(
+      (p) => !MOCK_DRIVE_IDS.has(p.driveId) && !MOCK_COMPANY_NAMES.has(p.companyName)
+    );
     if (driveId) {
-      return list.filter((p) => p.driveId === driveId);
+      return filtered.filter((p) => p.driveId === driveId);
     }
-    return list;
+    return filtered;
   }
 
   // --- 6-MONTH ARCHIVE & SAFE DRIVE DELETION ---

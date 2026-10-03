@@ -234,26 +234,21 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
       placementsRes,
     ] = await Promise.all([
       isStaff ? db.prepare('SELECT * FROM students ORDER BY roll_number ASC LIMIT 3000').all<any>() : Promise.resolve({ results: [] }),
-      isTpo
-        ? db.prepare(
-            `SELECT d.*, 
-                    c.coordinator_username, c.plain_coordinator_password, 
-                    c.hr_username, c.plain_hr_password 
-             FROM drives d 
-             LEFT JOIN drive_credentials c ON d.id = c.drive_id 
-             ORDER BY d.drive_date DESC`
-          ).all<any>()
-        : db
-            .prepare(`SELECT * FROM drives WHERE status != 'DRAFT' OR ? = 1 ORDER BY drive_date DESC`)
-            .bind(isStaff ? 1 : 0)
-            .all<any>(),
+      db.prepare(`
+        SELECT d.*, 
+               c.coordinator_username, c.plain_coordinator_password, 
+               c.hr_username, c.plain_hr_password 
+        FROM drives d 
+        LEFT JOIN drive_credentials c ON d.id = c.drive_id 
+        ORDER BY d.drive_date DESC
+      `).all<any>(),
       db.prepare('SELECT * FROM rounds ORDER BY round_number ASC').all<any>(),
-      isStaff ? db.prepare('SELECT * FROM applications ORDER BY applied_at DESC').all<any>() : Promise.resolve({ results: [] }),
-      isStaff ? db.prepare('SELECT * FROM round_candidates').all<any>() : Promise.resolve({ results: [] }),
-      isStaff ? db.prepare('SELECT * FROM batches ORDER BY created_at ASC').all<any>() : Promise.resolve({ results: [] }),
-      isStaff ? db.prepare('SELECT * FROM batch_students').all<any>() : Promise.resolve({ results: [] }),
-      isStaff ? db.prepare('SELECT * FROM evaluations').all<any>() : Promise.resolve({ results: [] }),
-      isStaff ? db.prepare('SELECT * FROM round_results').all<any>() : Promise.resolve({ results: [] }),
+      db.prepare('SELECT * FROM applications ORDER BY applied_at DESC').all<any>(),
+      db.prepare('SELECT * FROM round_candidates').all<any>(),
+      db.prepare('SELECT * FROM batches ORDER BY created_at ASC').all<any>(),
+      db.prepare('SELECT * FROM batch_students').all<any>(),
+      db.prepare('SELECT * FROM evaluations').all<any>(),
+      db.prepare('SELECT * FROM round_results').all<any>(),
       db.prepare('SELECT * FROM placements ORDER BY placed_at DESC').all<any>(),
     ]);
 
