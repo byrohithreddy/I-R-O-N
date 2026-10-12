@@ -6,6 +6,7 @@ import { StatusBadge } from '../common/StatusBadge';
 import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import {
+  BriefcaseBusiness,
   Plus,
   Key,
   Edit2,
@@ -393,7 +394,41 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-200">
-            {filteredDrives.map((d) => {
+            {filteredDrives.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-6 py-12 text-center">
+                  <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-[#edf3e8] text-emerald-900">
+                    <BriefcaseBusiness className="h-5 w-5" />
+                  </div>
+                  <p className="mt-3 text-sm font-semibold text-zinc-900">
+                    {drives.length === 0 ? 'No recruitment drives yet' : `No ${filterStatus.toLowerCase()} drives`}
+                  </p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {drives.length === 0
+                      ? 'Create a drive to start building your campus recruitment pipeline.'
+                      : 'Choose another status to see drives in a different stage.'}
+                  </p>
+                  {drives.length === 0 ? (
+                    <button
+                      type="button"
+                      onClick={handleOpenCreate}
+                      className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-zinc-950 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Create your first drive
+                    </button>
+                  ) : filterStatus !== 'ALL' ? (
+                    <button
+                      type="button"
+                      onClick={() => setFilterStatus('ALL')}
+                      className="mt-4 text-xs font-semibold text-emerald-900 underline decoration-emerald-900/30 underline-offset-4 hover:text-emerald-700"
+                    >
+                      View all drives
+                    </button>
+                  ) : null}
+                </td>
+              </tr>
+            ) : filteredDrives.map((d) => {
               const apps = ironStorage.getApplications(d.id);
               return (
                 <tr key={d.id} className="hover:bg-zinc-50/50">
