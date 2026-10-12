@@ -54,7 +54,7 @@ export const SpotlightCard: React.FC<SpotlightCardProps> = ({
             'radial-gradient(320px circle at var(--spotlight-x) var(--spotlight-y), rgb(190 242 100 / 0.13), transparent 72%)',
         }}
       />
-      <div className="relative z-10 flex h-full min-h-0 flex-col">{children}</div>
+      <div className="relative z-10 flex h-full min-h-0 flex-1 flex-col justify-between">{children}</div>
     </motion.div>
   );
 };

@@ -3,6 +3,7 @@ import { Github, ExternalLink } from 'lucide-react';
 import { User, Drive } from './types';
 import { ironStorage } from './services/storage';
 import { Header } from './components/layout/Header';
+import iconSrc from './icon.svg';
 import { LoginModal } from './components/auth/LoginModal';
 import { PublicHome } from './components/public/PublicHome';
 import { AboutIron } from './components/public/AboutIron';
@@ -115,23 +116,21 @@ export default function App() {
           currentUser ? 'app-admin' : 'app-public'
         }`}
       >
+        {/* ABOUT VIEW (Available to all users) */}
+        {currentView === 'about' && <AboutIron />}
+
         {/* PUBLIC VIEWS */}
-        {!currentUser && (
-          <>
-            {currentView === 'public-drives' && (
-              <PublicHome
-                onOpenLogin={() => setIsLoginOpen(true)}
-                onRefresh={handleRefresh}
-              />
-            )}
-            {currentView === 'about' && <AboutIron />}
-          </>
+        {!currentUser && currentView !== 'about' && (
+          <PublicHome
+            onOpenLogin={() => setIsLoginOpen(true)}
+            onRefresh={handleRefresh}
+          />
         )}
 
         {/* TPO ADMIN VIEWS */}
-        {currentUser && currentUser.role === 'TPO' && (
+        {currentUser && currentUser.role === 'TPO' && currentView !== 'about' && (
           <>
-            {currentView === 'tpo-dashboard' && (
+            {(currentView === 'tpo-dashboard' || currentView === 'tpo-home') && (
               <TpoDashboard
                 onNavigate={(v, dId) => handleNavigate(v, dId)}
                 onCreateDrive={() => handleNavigate('tpo-drives')}
@@ -166,12 +165,12 @@ export default function App() {
         )}
 
         {/* COORDINATOR VIEWS */}
-        {currentUser && currentUser.role === 'COORDINATOR' && (
+        {currentUser && currentUser.role === 'COORDINATOR' && currentView !== 'about' && (
           <CoordinatorView currentUser={currentUser} onRefresh={handleRefresh} refreshTick={refreshTick} />
         )}
 
         {/* COMPANY HR VIEWS */}
-        {currentUser && currentUser.role === 'HR' && (
+        {currentUser && currentUser.role === 'HR' && currentView !== 'about' && (
           <HrEvaluationView currentUser={currentUser} onRefresh={handleRefresh} refreshTick={refreshTick} />
         )}
       </main>
@@ -180,6 +179,7 @@ export default function App() {
       <footer className="app-footer border-t border-zinc-200 bg-white py-6 text-xs text-zinc-500">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
+            <img src={iconSrc} alt="IRON Logo" className="h-4 w-4" />
             <span className="font-bold tracking-tight text-zinc-950">IRON</span>
             <span>·</span>
             <span>Integrated Recruitment Operations Navigator</span>

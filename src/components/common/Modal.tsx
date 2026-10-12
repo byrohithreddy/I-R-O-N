@@ -51,8 +51,8 @@ export const Modal: React.FC<ModalProps> = ({
       >
         <div className="flex items-start justify-between gap-4 border-b border-[#e6ebe4] bg-[#f8faf7] px-5 py-4 sm:px-6">
           <div className="flex min-w-0 items-start gap-3">
-            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#eaf1e4]">
-              <img src={iconSrc} alt="" className="h-4 w-4" />
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#d6e2d0] bg-[#eaf1e4]">
+              <img src={iconSrc} alt="IRON Logo" className="h-4 w-4" />
             </span>
             <div>
               <h2 className="text-base font-semibold tracking-tight text-zinc-900">{title}</h2>

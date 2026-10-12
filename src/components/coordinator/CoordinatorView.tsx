@@ -52,7 +52,9 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
 
   const drives = ironStorage.getDrives();
   // Coordinator is assigned to their specific drive (Rule 26)
-  const assignedDrive = drives.find((d) => d.id === currentUser.driveId) || drives[0];
+  const assignedDrive = currentUser.driveId
+    ? drives.find((d) => d.id === currentUser.driveId)
+    : drives[0];
 
   const rounds = ironStorage.getRounds(assignedDrive?.id);
   const [selectedRoundId, setSelectedRoundId] = useState<string>(
@@ -147,16 +149,8 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
   const [assignError, setAssignError] = useState<string | null>(null);
   const [assignSuccess, setAssignSuccess] = useState<string | null>(null);
 
-  if (!assignedDrive) {
-    return (
-      <div className="p-8 text-center text-xs text-zinc-500">
-        No drive assigned to this coordinator account.
-      </div>
-    );
-  }
-
   // Candidates for selected round
-  const roundCandidates = ironStorage.getCandidates(selectedRoundId);
+  const roundCandidates = selectedRoundId ? ironStorage.getCandidates(selectedRoundId) : [];
 
   // All batch assignments in this round (Rule 15: Student Batch Uniqueness)
   // Defensively ensure assignments only count if their batch currently exists in this round
@@ -234,6 +228,7 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
       return;
     }
 
+    if (!assignedDrive) return;
     try {
       const newB = ironStorage.createBatch(
         selectedRoundId,
@@ -402,6 +397,14 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
       alert(err.message);
     }
   };
+
+  if (!assignedDrive) {
+    return (
+      <div className="p-8 text-center text-xs text-zinc-500">
+        No drive assigned to this coordinator account.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

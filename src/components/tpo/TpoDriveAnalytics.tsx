@@ -65,23 +65,15 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
   const [hoveredBranchSlice, setHoveredBranchSlice] = useState<number | null>(null);
   const [hoveredStatusSlice, setHoveredStatusSlice] = useState<number | null>(null);
 
-  const drive = drives.find((d) => d.id === selectedDriveId);
+  const drive = drives.find((d) => d.id === selectedDriveId) || drives[0];
   const students = ironStorage.getStudents();
   const studentMap = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
 
-  if (!drive) {
-    return (
-      <div className="p-8 text-center text-xs text-zinc-500">
-        No drive selected for analytics.
-      </div>
-    );
-  }
-
-  const applications: Application[] = ironStorage.getApplications(drive.id);
-  const rounds: DriveRound[] = ironStorage.getRounds(drive.id);
-  const candidates: RoundCandidate[] = ironStorage.getCandidates().filter((c) => c.driveId === drive.id);
-  const placements: Placement[] = ironStorage.getPlacements(drive.id);
-  const results = ironStorage.getRoundResults().filter((r) => r.driveId === drive.id);
+  const applications: Application[] = drive ? ironStorage.getApplications(drive.id) : [];
+  const rounds: DriveRound[] = drive ? ironStorage.getRounds(drive.id) : [];
+  const candidates: RoundCandidate[] = drive ? ironStorage.getCandidates().filter((c) => c.driveId === drive.id) : [];
+  const placements: Placement[] = drive ? ironStorage.getPlacements(drive.id) : [];
+  const results = drive ? ironStorage.getRoundResults().filter((r) => r.driveId === drive.id) : [];
 
   const eligibleCount = applications.filter(
     (a) => a.eligibilityStatus === 'ELIGIBLE' || a.eligibilityStatus === 'OVERRIDDEN'
@@ -171,7 +163,7 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
       };
     });
 
-    const companySlug = (drive.companyName || 'drive').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const companySlug = (drive?.companyName || 'drive').replace(/[^a-zA-Z0-9_-]/g, '_');
     const filename = `${companySlug}_Total_Applications.csv`;
     downloadCsv(filename, rows);
     setExportFeedback(`Downloaded ${filename} (${rows.length} applications).`);
@@ -212,7 +204,7 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
     }
 
     // 5. If this is the final round, include placed students
-    if (round.isFinalRound || index === rounds.length - 1) {
+    if ((round.isFinalRound || index === rounds.length - 1) && drive) {
       placements
         .filter((p) => p.driveId === drive.id && (!p.finalRoundId || p.finalRoundId === round.id))
         .forEach((p) => studentIdSet.add(p.studentId));
@@ -243,7 +235,7 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
       return;
     }
 
-    const companySlug = (drive.companyName || 'drive').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const companySlug = (drive?.companyName || 'drive').replace(/[^a-zA-Z0-9_-]/g, '_');
     const roundSlug = (round.roundName || `Round_${index + 1}`).replace(/[^a-zA-Z0-9_-]/g, '_');
     const filename = `${companySlug}_${roundSlug}_Selected_Promoted_Students.csv`;
     downloadCsv(filename, rows);
@@ -269,7 +261,7 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
       };
     });
 
-    const companySlug = (drive.companyName || 'drive').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const companySlug = (drive?.companyName || 'drive').replace(/[^a-zA-Z0-9_-]/g, '_');
     const filename = `${companySlug}_Final_Placed_Students.csv`;
     downloadCsv(filename, rows);
     setExportFeedback(`Downloaded ${filename} (${rows.length} students).`);
@@ -277,7 +269,7 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
   };
 
   const handleExportSelected = () => {
-    if (placements.length === 0) {
+    if (!drive || placements.length === 0) {
       setExportFeedback('No selected/placed candidates recorded yet for this drive.');
       setTimeout(() => setExportFeedback(null), 3000);
       return;
@@ -423,7 +415,7 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
       phone: r.mobileNumber,
       email: r.emailAddress,
     }));
-    const companySlug = (drive.companyName || 'drive').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const companySlug = (drive?.companyName || 'drive').replace(/[^a-zA-Z0-9_-]/g, '_');
     const filename = `${companySlug}_Master_Dataset.csv`;
     downloadCsv(filename, rows);
     setExportFeedback(`Downloaded ${filename} (${rows.length} records).`);
@@ -462,6 +454,14 @@ export const TpoDriveAnalytics: React.FC<TpoDriveAnalyticsProps> = ({
   const healthPieTotal = useMemo(() => {
     return healthPieData.reduce((acc, item) => acc + item.value, 0);
   }, [healthPieData]);
+
+  if (!drive) {
+    return (
+      <div className="p-8 text-center text-xs text-zinc-500">
+        No drive selected for analytics.
+      </div>
+    );
+  }
 
   // Helper to construct SVG Donut Paths cleanly
   const renderDonutSlices = (

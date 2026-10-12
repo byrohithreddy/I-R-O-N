@@ -42,7 +42,7 @@ export const DriveCard: React.FC<DriveCardProps> = ({
         {/* Status badges & Deadline info */}
         <div className="flex items-center gap-2 mb-4">
           <StatusBadge status={drive.status} />
-          {isDeadlinePassed ? (
+          {!isApplicationOpen ? (
             <span className="text-[11px] font-medium text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded">
               Applications Closed
             </span>

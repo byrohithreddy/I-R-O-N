@@ -51,7 +51,9 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
   }, [refreshTick]);
 
   const drives = ironStorage.getDrives();
-  const assignedDrive = drives.find((d) => d.id === currentUser.driveId) || drives[0];
+  const assignedDrive = currentUser.driveId
+    ? drives.find((d) => d.id === currentUser.driveId)
+    : drives[0];
 
   const rounds = ironStorage.getRounds(assignedDrive?.id);
   const [selectedRoundId, setSelectedRoundId] = useState<string>(
@@ -97,14 +99,6 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
     rejectedCount: number;
     placedCount: number;
   } | null>(null);
-
-  if (!assignedDrive) {
-    return (
-      <div className="p-8 text-center text-xs text-zinc-500">
-        No assigned company drive found for this HR account.
-      </div>
-    );
-  }
 
   const batchStudents = selectedBatch ? ironStorage.getBatchStudents(selectedBatch.id) : [];
   const evaluations = selectedBatch ? ironStorage.getEvaluations(selectedBatch.id) : [];
@@ -218,7 +212,7 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
 
   // Export batch results
   const handleExportBatchCSV = () => {
-    if (!selectedBatch) return;
+    if (!selectedBatch || !assignedDrive) return;
     const headers = ['Roll Number,Student Name,Branch,Department,CGPA,HR Action,Final Outcome'];
     const lines = batchStudents.map((bs) => {
       const s = studentMap.get(bs.studentId);
@@ -248,6 +242,14 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
     else if (act === 'HOLD' && !isFinalRound) currentHolds++;
     else currentNone++;
   });
+
+  if (!assignedDrive) {
+    return (
+      <div className="p-8 text-center text-xs text-zinc-500">
+        No assigned company drive found for this HR account.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

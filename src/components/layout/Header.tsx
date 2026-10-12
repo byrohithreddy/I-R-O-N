@@ -108,12 +108,12 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="mx-auto flex h-[62px] max-w-[1440px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
           <button
             type="button"
-            onClick={() => handleNavigate(currentUser ? `${currentUser.role.toLowerCase()}-home` : 'public-drives')}
+            onClick={() => handleNavigate(navigation[0]?.view || 'public-drives')}
             className="group flex items-center gap-2.5 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300"
             aria-label="IRON home"
           >
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-lime-200/15 bg-lime-200/10">
-              <img src={iconSrc} alt="" className="h-5 w-5" />
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-lime-300/25 bg-lime-300/15 shadow-xs">
+              <img src={iconSrc} alt="IRON Logo" className="h-5 w-5 brightness-0 invert" />
             </span>
             <span className="text-lg font-bold tracking-[-0.04em] text-white">IRON</span>
             <span className="hidden border-l border-white/15 pl-2.5 text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-400 sm:inline">

@@ -594,7 +594,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           d.jobDescription || '',
           d.eligibilityCriteria || '',
           Number(d.minimumCgpa) || 7.0,
-          Number(d.backlogRule) || 0,
+          d.backlogRule === 'NOT_APPLICABLE' || d.backlogRule === -1
+            ? 'NOT_APPLICABLE'
+            : Number.isFinite(Number(d.backlogRule))
+            ? Number(d.backlogRule)
+            : 0,
           JSON.stringify(d.eligibleBranches || ['CSE', 'IT', 'ECE']),
           driveDate,
           d.driveTime || '09:00',
@@ -816,16 +820,16 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       if (auth.error) return auth.error;
 
       const driveId = purgeMatch[1];
-      await env.DB.prepare('DELETE FROM drives WHERE id = ?').bind(driveId).run();
-      await env.DB.prepare('DELETE FROM rounds WHERE drive_id = ?').bind(driveId).run();
-      await env.DB.prepare('DELETE FROM applications WHERE drive_id = ?').bind(driveId).run();
-      await env.DB.prepare('DELETE FROM round_candidates WHERE drive_id = ?').bind(driveId).run();
-      await env.DB.prepare('DELETE FROM batches WHERE drive_id = ?').bind(driveId).run();
-      await env.DB.prepare('DELETE FROM batch_students WHERE drive_id = ?').bind(driveId).run();
       await env.DB.prepare('DELETE FROM evaluations WHERE round_id IN (SELECT id FROM rounds WHERE drive_id = ?)').bind(driveId).run();
       await env.DB.prepare('DELETE FROM round_results WHERE drive_id = ?').bind(driveId).run();
+      await env.DB.prepare('DELETE FROM batch_students WHERE drive_id = ?').bind(driveId).run();
+      await env.DB.prepare('DELETE FROM batches WHERE drive_id = ?').bind(driveId).run();
+      await env.DB.prepare('DELETE FROM round_candidates WHERE drive_id = ?').bind(driveId).run();
+      await env.DB.prepare('DELETE FROM applications WHERE drive_id = ?').bind(driveId).run();
+      await env.DB.prepare('DELETE FROM rounds WHERE drive_id = ?').bind(driveId).run();
       await env.DB.prepare('DELETE FROM drive_credentials WHERE drive_id = ?').bind(driveId).run();
       await env.DB.prepare('DELETE FROM users WHERE drive_id = ?').bind(driveId).run();
+      await env.DB.prepare('DELETE FROM drives WHERE id = ?').bind(driveId).run();
       return jsonResponse({ success: true });
     }
 
@@ -1369,7 +1373,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const batchId = id || `btch_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
       await env.DB.prepare(
         `INSERT INTO batches (id, round_id, drive_id, batch_name, capacity_type, capacity, status, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'DRAFT', ?, datetime('now'))`
+         VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, datetime('now'))`
       )
         .bind(
           batchId,
@@ -1382,7 +1386,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         )
         .run();
 
-      return jsonResponse({ id: batchId, roundId, driveId, batchName, capacityType, capacity, status: 'DRAFT' }, 201);
+      return jsonResponse({ id: batchId, roundId, driveId, batchName, capacityType, capacity, status: 'OPEN' }, 201);
     }
 
     // Delete Batch: DELETE /api/batches/:id

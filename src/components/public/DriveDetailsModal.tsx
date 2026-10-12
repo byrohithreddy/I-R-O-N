@@ -145,7 +145,7 @@ export const DriveDetailsModal: React.FC<DriveDetailsModalProps> = ({
           >
             Close
           </button>
-          {!isDeadlinePassed && drive.status !== 'CANCELLED' && onApplyClick && (
+          {!isDeadlinePassed && drive.status !== 'CANCELLED' && drive.status !== 'COMPLETED' && onApplyClick && (
             <button
               type="button"
               onClick={() => {
