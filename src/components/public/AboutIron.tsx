@@ -37,7 +37,7 @@ export const AboutIron: React.FC = () => {
             <span>Open Source System Architecture & Source Code</span>
           </div>
           <span className="text-[10px] font-mono bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded border border-zinc-700">
-            production-ready v1.0
+            production-ready v2.0
           </span>
         </div>
         <p className="text-xs text-zinc-300 leading-relaxed">

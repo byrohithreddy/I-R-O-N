@@ -384,6 +384,7 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
               <option value="EEE">EEE ({branchCounts.EEE || 0})</option>
               <option value="MECH">MECH ({branchCounts.MECH || 0})</option>
               <option value="CIVIL">CIVIL ({branchCounts.CIVIL || 0})</option>
+              <option value="AERO">AERO ({branchCounts.AERO || 0})</option>
               <option value="MBA">MBA ({branchCounts.MBA || 0})</option>
             </select>
           </div>
@@ -668,6 +669,7 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
                     EEE: 'Electrical & Electronics',
                     MECH: 'Mechanical Engineering',
                     CIVIL: 'Civil Engineering',
+                    AERO: 'Aeronautical Engineering',
                     MBA: 'Master of Business Administration',
                   };
                   setFormData({ ...formData, branch: b, department: deptMap[b] || 'Engineering' });
@@ -683,6 +685,7 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
                 <option value="EEE">EEE</option>
                 <option value="MECH">MECH</option>
                 <option value="CIVIL">CIVIL</option>
+                <option value="AERO">AERO (Aeronautical Engineering)</option>
                 <option value="MBA">MBA</option>
               </select>
             </div>

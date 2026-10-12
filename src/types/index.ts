@@ -189,3 +189,33 @@ export interface DriveArchive {
     finalSelectedCount: number;
   };
 }
+
+export const STANDARD_BRANCHES = [
+  'CSE',
+  'CSE-DS',
+  'CSE AIML',
+  'CSE-CS',
+  'CSIT',
+  'ECE',
+  'EEE',
+  'MECH',
+  'CIVIL',
+  'AERO',
+  'MBA',
+] as const;
+
+export type StandardBranch = typeof STANDARD_BRANCHES[number];
+
+export const BRANCH_DEPARTMENT_MAP: Record<string, string> = {
+  CSE: 'Computer Science & Engineering',
+  'CSE-DS': 'CSE (Data Science)',
+  'CSE AIML': 'CSE (AI & Machine Learning)',
+  'CSE-CS': 'CSE (Cyber Security)',
+  CSIT: 'Computer Science & Information Technology',
+  ECE: 'Electronics & Communication',
+  EEE: 'Electrical & Electronics',
+  MECH: 'Mechanical Engineering',
+  CIVIL: 'Civil Engineering',
+  AERO: 'Aeronautical Engineering',
+  MBA: 'Master of Business Administration',
+};

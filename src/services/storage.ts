@@ -12,6 +12,7 @@ import {
   Placement,
   DriveArchive,
   User,
+  BRANCH_DEPARTMENT_MAP,
 } from '../types';
 import JSZip from 'jszip';
 import { api } from './api';
@@ -31,584 +32,27 @@ const STORAGE_KEYS = {
   ARCHIVES: 'iron_archives_v1',
 };
 
-// Student Master DB is backend-authoritative. Students are loaded from /api/sync and are never seeded in the browser.
+// Student Master DB and Recruitment Drives are backend-authoritative in Cloudflare D1.
+const MOCK_DRIVE_IDS = new Set(['drv_google', 'drv_tcs', 'drv_microsoft', 'drv_accenture']);
+const MOCK_COMPANY_NAMES = new Set([
+  'Google Cloud',
+  'Google Cloud India',
+  'TCS Digital',
+  'Tata Consultancy Services',
+  'Microsoft',
+  'Microsoft IDC',
+  'Accenture',
+]);
 
-// Seed Drives with realistic schedules and rounds
-const INITIAL_DRIVES: Drive[] = [
-  {
-    id: 'drv_google',
-    companyName: 'Google Cloud',
-    jobRole: 'Associate Cloud Engineer',
-    package: '₹18.5 LPA',
-    jobDescription: 'Build scalable cloud computing infrastructure and distributed backend microservices. Working directly with global enterprise architectures and high-throughput systems.',
-    eligibilityCriteria: 'Minimum 7.5 CGPA throughout academics. Zero active backlogs. Circuit branches (CSE, CSIT, ECE) eligible.',
-    minimumCgpa: 7.5,
-    backlogRule: 0,
-    eligibleBranches: ['CSE', 'CSIT', 'ECE'],
-    driveDate: '2026-10-15',
-    driveTime: '09:00',
-    location: 'Main Auditorium & CS Labs',
-    applicationDeadline: '2026-10-15T00:00:00Z',
-    status: 'ONGOING',
-    retentionExpiresAt: '2027-04-15T00:00:00Z',
-    createdAt: '2026-09-01T08:00:00Z',
-    updatedAt: '2026-09-20T10:00:00Z',
-    credentials: {
-      coordinatorUsername: 'coord_google',
-      coordinatorPassword: 'coord2026@google',
-      hrUsername: 'hr_google',
-      hrPassword: 'hr2026@google',
-    },
-  },
-  {
-    id: 'drv_tcs',
-    companyName: 'TCS Digital',
-    jobRole: 'Systems Engineer Specialist',
-    package: '₹7.5 LPA',
-    jobDescription: 'High-growth technology engineering track for next-gen digital enterprise solutions, AI integration, and cloud modernization.',
-    eligibilityCriteria: 'Minimum 7.0 CGPA. Maximum 1 active backlog permitted. Open to all engineering branches.',
-    minimumCgpa: 7.0,
-    backlogRule: 1,
-    eligibleBranches: ['CSE', 'CSIT', 'ECE', 'EEE', 'MECH'],
-    driveDate: '2026-10-02',
-    driveTime: '10:00',
-    location: 'Placement Block Room 302',
-    applicationDeadline: '2026-10-02T00:00:00Z',
-    status: 'ONGOING',
-    retentionExpiresAt: '2027-04-02T00:00:00Z',
-    createdAt: '2026-09-05T09:00:00Z',
-    updatedAt: '2026-09-22T14:00:00Z',
-    credentials: {
-      coordinatorUsername: 'coord_tcs',
-      coordinatorPassword: 'coord2026@tcs',
-      hrUsername: 'hr_tcs',
-      hrPassword: 'hr2026@tcs',
-    },
-  },
-  {
-    id: 'drv_microsoft',
-    companyName: 'Microsoft',
-    jobRole: 'Software Development Engineer I',
-    package: '₹22.0 LPA',
-    jobDescription: 'Software engineer role in core platform teams. Deep problem-solving skills, algorithms, distributed storage systems, and developer tooling.',
-    eligibilityCriteria: 'Minimum 8.0 CGPA with no standing backlogs. CSE and CSIT branches strictly eligible.',
-    minimumCgpa: 8.0,
-    backlogRule: 0,
-    eligibleBranches: ['CSE', 'CSIT'],
-    driveDate: '2026-10-28',
-    driveTime: '08:30',
-    location: 'Virtual + Campus Center',
-    applicationDeadline: '2026-10-28T00:00:00Z',
-    status: 'UPCOMING',
-    retentionExpiresAt: '2027-04-28T00:00:00Z',
-    createdAt: '2026-09-15T09:00:00Z',
-    updatedAt: '2026-09-15T09:00:00Z',
-    credentials: {
-      coordinatorUsername: 'coord_msft',
-      coordinatorPassword: 'coord2026@msft',
-      hrUsername: 'hr_msft',
-      hrPassword: 'hr2026@msft',
-    },
-  },
-  {
-    id: 'drv_accenture',
-    companyName: 'Accenture',
-    jobRole: 'Associate Software Engineer',
-    package: '₹4.5 LPA',
-    jobDescription: 'Full-stack application development, quality engineering, enterprise cloud migration, and client service management.',
-    eligibilityCriteria: 'Minimum 6.5 CGPA. Up to 1 backlog permitted. All disciplines eligible.',
-    minimumCgpa: 6.5,
-    backlogRule: 1,
-    eligibleBranches: ['CSE', 'CSIT', 'ECE', 'EEE', 'MECH'],
-    driveDate: '2026-03-20',
-    driveTime: '09:00',
-    location: 'Online Examination Halls',
-    applicationDeadline: '2026-03-20T00:00:00Z',
-    status: 'COMPLETED',
-    retentionExpiresAt: '2026-09-20T00:00:00Z', // Expired or expiring!
-    createdAt: '2026-02-15T08:00:00Z',
-    updatedAt: '2026-03-25T16:00:00Z',
-    credentials: {
-      coordinatorUsername: 'coord_accenture',
-      coordinatorPassword: 'coord2026@acc',
-      hrUsername: 'hr_accenture',
-      hrPassword: 'hr2026@acc',
-    },
-  },
-];
+const INITIAL_DRIVES: Drive[] = [];
 
-// Seed Rounds for Google Cloud
-const INITIAL_ROUNDS: DriveRound[] = [
-  // Google Rounds
-  {
-    id: 'rnd_g_1',
-    driveId: 'drv_google',
-    roundNumber: 1,
-    roundName: 'Round 1: Online Coding & Aptitude',
-    roundType: 'Coding',
-    description: '90-minute online coding test covering Data Structures, Algorithms, and System Aptitude.',
-    status: 'COMPLETED',
-    isFinalRound: false,
-  },
-  {
-    id: 'rnd_g_2',
-    driveId: 'drv_google',
-    roundNumber: 2,
-    roundName: 'Round 2: Technical Interview',
-    roundType: 'Technical',
-    description: '1-on-1 live coding and technical problem solving with Senior Cloud Architects.',
-    status: 'ONGOING',
-    isFinalRound: false,
-  },
-  {
-    id: 'rnd_g_3',
-    driveId: 'drv_google',
-    roundNumber: 3,
-    roundName: 'Round 3: Leadership & HR Interview',
-    roundType: 'HR',
-    description: 'Googleyness, behavioral alignment, cultural fit, and offer discussion.',
-    status: 'UPCOMING',
-    isFinalRound: true,
-  },
+const INITIAL_ROUNDS: DriveRound[] = [];
 
-  // TCS Rounds
-  {
-    id: 'rnd_tcs_1',
-    driveId: 'drv_tcs',
-    roundNumber: 1,
-    roundName: 'Round 1: TCS NQT Online Test',
-    roundType: 'Aptitude',
-    description: 'National Qualifier Test covering Numerical, Reasoning, and Advanced Coding.',
-    status: 'COMPLETED',
-    isFinalRound: false,
-  },
-  {
-    id: 'rnd_tcs_2',
-    driveId: 'drv_tcs',
-    roundNumber: 2,
-    roundName: 'Round 2: Technical & Managerial',
-    roundType: 'Technical',
-    description: 'In-depth assessment of engineering projects, core subjects, and analytical competence.',
-    status: 'COMPLETED',
-    isFinalRound: false,
-  },
-  {
-    id: 'rnd_tcs_3',
-    driveId: 'drv_tcs',
-    roundNumber: 3,
-    roundName: 'Round 3: Final HR Interview',
-    roundType: 'HR',
-    description: 'Final Round selection. Note: Rule 22 strictly forbids HOLD. Only SELECT or No Action.',
-    status: 'ONGOING',
-    isFinalRound: true,
-  },
-
-  // Microsoft Rounds
-  {
-    id: 'rnd_msft_1',
-    driveId: 'drv_microsoft',
-    roundNumber: 1,
-    roundName: 'Round 1: Codility Online Assessment',
-    roundType: 'Coding',
-    description: '3 algorithmic problems on Codility platform with test-case scoring.',
-    status: 'UPCOMING',
-    isFinalRound: false,
-  },
-  {
-    id: 'rnd_msft_2',
-    driveId: 'drv_microsoft',
-    roundNumber: 2,
-    roundName: 'Round 2: Virtual Technical Round',
-    roundType: 'Technical',
-    description: 'System design, tree/graph traversal, and clean coding standards.',
-    status: 'UPCOMING',
-    isFinalRound: false,
-  },
-  {
-    id: 'rnd_msft_3',
-    driveId: 'drv_microsoft',
-    roundNumber: 3,
-    roundName: 'Round 3: AA / Hiring Manager Interview',
-    roundType: 'HR',
-    description: 'As-Appropriate interview assessing long-term engineering potential and cultural alignment.',
-    status: 'UPCOMING',
-    isFinalRound: true,
-  },
-
-  // Accenture Rounds (Completed historical drive)
-  {
-    id: 'rnd_acc_1',
-    driveId: 'drv_accenture',
-    roundNumber: 1,
-    roundName: 'Round 1: Cognitive Assessment',
-    roundType: 'Aptitude',
-    description: 'Cognitive and technical assessment.',
-    status: 'COMPLETED',
-    isFinalRound: false,
-  },
-  {
-    id: 'rnd_acc_2',
-    driveId: 'drv_accenture',
-    roundNumber: 2,
-    roundName: 'Round 2: Technical & HR Interview',
-    roundType: 'HR',
-    description: 'Final interview and placement selection.',
-    status: 'COMPLETED',
-    isFinalRound: true,
-  },
-];
-
-// Seed Applications
-const INITIAL_APPLICATIONS: Application[] = [
-  {
-    id: 'app_g_01',
-    driveId: 'drv_google',
-    studentId: 'std_01', // Rohith
-    applicationEmail: 'rohith.varma@college.edu',
-    applicationPhone: '+91 98480 12345',
-    eligibilityStatus: 'ELIGIBLE',
-    eligibilityOverride: false,
-    appliedAt: '2026-09-10T11:00:00Z',
-    status: 'IN_PROGRESS',
-  },
-  {
-    id: 'app_g_02',
-    driveId: 'drv_google',
-    studentId: 'std_02', // Ananya
-    applicationEmail: 'ananya.s@college.edu',
-    applicationPhone: '+91 98480 23456',
-    eligibilityStatus: 'ELIGIBLE',
-    eligibilityOverride: false,
-    appliedAt: '2026-09-10T12:30:00Z',
-    status: 'IN_PROGRESS',
-  },
-  {
-    id: 'app_g_03',
-    driveId: 'drv_google',
-    studentId: 'std_03', // Rahul
-    applicationEmail: 'rahul.n@college.edu',
-    applicationPhone: '+91 98480 34567',
-    eligibilityStatus: 'ELIGIBLE',
-    eligibilityOverride: false,
-    appliedAt: '2026-09-11T09:15:00Z',
-    status: 'IN_PROGRESS',
-  },
-  {
-    id: 'app_g_04',
-    driveId: 'drv_google',
-    studentId: 'std_04', // Sai Teja
-    applicationEmail: 'saiteja.r@college.edu',
-    applicationPhone: '+91 98480 45678',
-    eligibilityStatus: 'ELIGIBLE',
-    eligibilityOverride: false,
-    appliedAt: '2026-09-11T10:00:00Z',
-    status: 'IN_PROGRESS',
-  },
-  {
-    id: 'app_g_07',
-    driveId: 'drv_google',
-    studentId: 'std_07', // Meera
-    applicationEmail: 'meera.iyer@college.edu',
-    applicationPhone: '+91 98480 78901',
-    eligibilityStatus: 'ELIGIBLE',
-    eligibilityOverride: false,
-    appliedAt: '2026-09-12T14:20:00Z',
-    status: 'IN_PROGRESS',
-  },
-  {
-    id: 'app_g_09',
-    driveId: 'drv_google',
-    studentId: 'std_09', // Deepika
-    applicationEmail: 'deepika.sen@college.edu',
-    applicationPhone: '+91 98480 90123',
-    eligibilityStatus: 'ELIGIBLE',
-    eligibilityOverride: false,
-    appliedAt: '2026-09-12T15:00:00Z',
-    status: 'IN_PROGRESS',
-  },
-  {
-    id: 'app_g_10',
-    driveId: 'drv_google',
-    studentId: 'std_10', // Aditya
-    applicationEmail: 'aditya.k@college.edu',
-    applicationPhone: '+91 98480 01234',
-    eligibilityStatus: 'ELIGIBLE',
-    eligibilityOverride: false,
-    appliedAt: '2026-09-13T09:40:00Z',
-    status: 'IN_PROGRESS',
-  },
-
-  // TCS Applications
-  {
-    id: 'app_tcs_01',
-    driveId: 'drv_tcs',
-    studentId: 'std_01',
-    applicationEmail: 'rohith.varma@college.edu',
-    applicationPhone: '+91 98480 12345',
-    eligibilityStatus: 'ELIGIBLE',
-    eligibilityOverride: false,
-    appliedAt: '2026-09-06T10:00:00Z',
-    status: 'IN_PROGRESS',
-  },
-  {
-    id: 'app_tcs_03',
-    driveId: 'drv_tcs',
-    studentId: 'std_03',
-    applicationEmail: 'rahul.n@college.edu',
-    applicationPhone: '+91 98480 34567',
-    eligibilityStatus: 'ELIGIBLE',
-    eligibilityOverride: false,
-    appliedAt: '2026-09-06T10:30:00Z',
-    status: 'IN_PROGRESS',
-  },
-  {
-    id: 'app_tcs_04',
-    driveId: 'drv_tcs',
-    studentId: 'std_04',
-    applicationEmail: 'saiteja.r@college.edu',
-    applicationPhone: '+91 98480 45678',
-    eligibilityStatus: 'ELIGIBLE',
-    eligibilityOverride: false,
-    appliedAt: '2026-09-06T11:00:00Z',
-    status: 'IN_PROGRESS',
-  },
-  {
-    id: 'app_tcs_05',
-    driveId: 'drv_tcs',
-    studentId: 'std_05', // Pooja (1 backlog, eligible for TCS!)
-    applicationEmail: 'pooja.h@college.edu',
-    applicationPhone: '+91 98480 56789',
-    eligibilityStatus: 'ELIGIBLE',
-    eligibilityOverride: false,
-    appliedAt: '2026-09-06T11:30:00Z',
-    status: 'IN_PROGRESS',
-  },
-];
-
-// Seed Candidates for Google Round 2 (Technical Interview)
-const INITIAL_CANDIDATES: RoundCandidate[] = [
-  // Google Round 2 Candidates (progressed from Round 1)
-  {
-    id: 'cand_g2_01',
-    driveId: 'drv_google',
-    roundId: 'rnd_g_2',
-    studentId: 'std_01',
-    applicationId: 'app_g_01',
-    entryStatus: 'ACTIVE',
-    sourceRoundId: 'rnd_g_1',
-    createdAt: '2026-09-20T10:00:00Z',
-  },
-  {
-    id: 'cand_g2_02',
-    driveId: 'drv_google',
-    roundId: 'rnd_g_2',
-    studentId: 'std_02',
-    applicationId: 'app_g_02',
-    entryStatus: 'ACTIVE',
-    sourceRoundId: 'rnd_g_1',
-    createdAt: '2026-09-20T10:00:00Z',
-  },
-  {
-    id: 'cand_g2_03',
-    driveId: 'drv_google',
-    roundId: 'rnd_g_2',
-    studentId: 'std_03',
-    applicationId: 'app_g_03',
-    entryStatus: 'HOLD', // Carried over as HOLD candidate from Round 1!
-    sourceRoundId: 'rnd_g_1',
-    createdAt: '2026-09-20T10:00:00Z',
-  },
-  {
-    id: 'cand_g2_04',
-    driveId: 'drv_google',
-    roundId: 'rnd_g_2',
-    studentId: 'std_04',
-    applicationId: 'app_g_04',
-    entryStatus: 'ACTIVE',
-    sourceRoundId: 'rnd_g_1',
-    createdAt: '2026-09-20T10:00:00Z',
-  },
-  {
-    id: 'cand_g2_07',
-    driveId: 'drv_google',
-    roundId: 'rnd_g_2',
-    studentId: 'std_07',
-    applicationId: 'app_g_07',
-    entryStatus: 'ACTIVE',
-    sourceRoundId: 'rnd_g_1',
-    createdAt: '2026-09-20T10:00:00Z',
-  },
-  {
-    id: 'cand_g2_09',
-    driveId: 'drv_google',
-    roundId: 'rnd_g_2',
-    studentId: 'std_09',
-    applicationId: 'app_g_09',
-    entryStatus: 'ACTIVE',
-    sourceRoundId: 'rnd_g_1',
-    createdAt: '2026-09-20T10:00:00Z',
-  },
-
-  // TCS Round 3 (Final HR) Candidates
-  {
-    id: 'cand_tcs3_01',
-    driveId: 'drv_tcs',
-    roundId: 'rnd_tcs_3',
-    studentId: 'std_01',
-    applicationId: 'app_tcs_01',
-    entryStatus: 'ACTIVE',
-    sourceRoundId: 'rnd_tcs_2',
-    createdAt: '2026-09-22T14:00:00Z',
-  },
-  {
-    id: 'cand_tcs3_03',
-    driveId: 'drv_tcs',
-    roundId: 'rnd_tcs_3',
-    studentId: 'std_03',
-    applicationId: 'app_tcs_03',
-    entryStatus: 'ACTIVE',
-    sourceRoundId: 'rnd_tcs_2',
-    createdAt: '2026-09-22T14:00:00Z',
-  },
-  {
-    id: 'cand_tcs3_04',
-    driveId: 'drv_tcs',
-    roundId: 'rnd_tcs_3',
-    studentId: 'std_04',
-    applicationId: 'app_tcs_04',
-    entryStatus: 'ACTIVE',
-    sourceRoundId: 'rnd_tcs_2',
-    createdAt: '2026-09-22T14:00:00Z',
-  },
-  {
-    id: 'cand_tcs3_05',
-    driveId: 'drv_tcs',
-    roundId: 'rnd_tcs_3',
-    studentId: 'std_05',
-    applicationId: 'app_tcs_05',
-    entryStatus: 'ACTIVE',
-    sourceRoundId: 'rnd_tcs_2',
-    createdAt: '2026-09-22T14:00:00Z',
-  },
-];
-
-// Seed Batches
-const INITIAL_BATCHES: Batch[] = [
-  // Google Round 2 Batches
-  {
-    id: 'btch_g2_1',
-    roundId: 'rnd_g_2',
-    driveId: 'drv_google',
-    batchName: 'Batch 1 - Systems & Algorithms',
-    capacityType: 'LIMITED',
-    capacity: 3,
-    status: 'OPEN',
-    createdBy: 'coord_google',
-    createdAt: '2026-09-21T09:00:00Z',
-  },
-  {
-    id: 'btch_g2_2',
-    roundId: 'rnd_g_2',
-    driveId: 'drv_google',
-    batchName: 'Batch 2 - Cloud Architecture',
-    capacityType: 'UNLIMITED',
-    capacity: null,
-    status: 'OPEN',
-    createdBy: 'coord_google',
-    createdAt: '2026-09-21T09:30:00Z',
-  },
-
-  // TCS Round 3 Batches (Final Round demo)
-  {
-    id: 'btch_tcs3_1',
-    roundId: 'rnd_tcs_3',
-    driveId: 'drv_tcs',
-    batchName: 'Final Batch A - HR Panel 1',
-    capacityType: 'LIMITED',
-    capacity: 10,
-    status: 'OPEN',
-    createdBy: 'coord_tcs',
-    createdAt: '2026-09-23T08:30:00Z',
-  },
-];
-
-// Seed Batch Students
-const INITIAL_BATCH_STUDENTS: BatchStudent[] = [
-  // Google Batch 1 has Rohith and Ananya
-  {
-    id: 'bs_g2_1',
-    batchId: 'btch_g2_1',
-    roundId: 'rnd_g_2',
-    studentId: 'std_01',
-    roundCandidateId: 'cand_g2_01',
-    addedBy: 'coord_google',
-    addedAt: '2026-09-21T09:10:00Z',
-  },
-  {
-    id: 'bs_g2_2',
-    batchId: 'btch_g2_1',
-    roundId: 'rnd_g_2',
-    studentId: 'std_02',
-    roundCandidateId: 'cand_g2_02',
-    addedBy: 'coord_google',
-    addedAt: '2026-09-21T09:12:00Z',
-  },
-
-  // TCS Final Batch A has Rohith, Rahul, Sai Teja
-  {
-    id: 'bs_tcs_1',
-    batchId: 'btch_tcs3_1',
-    roundId: 'rnd_tcs_3',
-    studentId: 'std_01',
-    roundCandidateId: 'cand_tcs3_01',
-    addedBy: 'coord_tcs',
-    addedAt: '2026-09-23T09:00:00Z',
-  },
-  {
-    id: 'bs_tcs_2',
-    batchId: 'btch_tcs3_1',
-    roundId: 'rnd_tcs_3',
-    studentId: 'std_03',
-    roundCandidateId: 'cand_tcs3_03',
-    addedBy: 'coord_tcs',
-    addedAt: '2026-09-23T09:05:00Z',
-  },
-  {
-    id: 'bs_tcs_3',
-    batchId: 'btch_tcs3_1',
-    roundId: 'rnd_tcs_3',
-    studentId: 'std_04',
-    roundCandidateId: 'cand_tcs3_04',
-    addedBy: 'coord_tcs',
-    addedAt: '2026-09-23T09:10:00Z',
-  },
-];
-
-// Initial Placements
-const INITIAL_PLACEMENTS: Placement[] = [
-  {
-    id: 'plc_01',
-    studentId: 'std_07', // Meera Iyer
-    driveId: 'drv_accenture',
-    companyName: 'Accenture',
-    jobRole: 'Associate Software Engineer',
-    package: '₹4.5 LPA',
-    finalRoundId: 'rnd_acc_2',
-    selectedAt: '2026-03-24T15:00:00Z',
-    createdAt: '2026-03-24T15:00:00Z',
-  },
-  {
-    id: 'plc_02',
-    studentId: 'std_08', // Karthik Subramanian
-    driveId: 'drv_accenture',
-    companyName: 'Accenture',
-    jobRole: 'Associate Software Engineer',
-    package: '₹4.5 LPA',
-    finalRoundId: 'rnd_acc_2',
-    selectedAt: '2026-03-24T15:00:00Z',
-    createdAt: '2026-03-24T15:00:00Z',
-  },
-];
+const INITIAL_APPLICATIONS: Application[] = [];
+const INITIAL_CANDIDATES: RoundCandidate[] = [];
+const INITIAL_BATCHES: Batch[] = [];
+const INITIAL_BATCH_STUDENTS: BatchStudent[] = [];
+const INITIAL_PLACEMENTS: Placement[] = [];
 
 // Helper functions for LocalStorage persistence & Real-Time Cloudflare D1 Backend Sync
 class IronStorage {
@@ -761,26 +205,76 @@ class IronStorage {
   }
 
   public init(forceReset = false): void {
-    // Student Master DB is authoritative in the backend. Never seed or restore
-    // student records from browser storage, including stale data from older builds.
+    // 1. Student Master DB is authoritative in the backend.
     this.memoryCache.delete('iron_students_v1');
     try {
       localStorage.removeItem('iron_students_v1');
     } catch {}
 
-    // Keep the existing local/demo initialization for non-student entities.
-    // Backend sync will replace these with the authoritative server state.
+    // 2. Recruitment Drives & related records are authoritative in Cloudflare D1.
+    // Purge any legacy sample mock drives that may exist in browser localStorage.
+    this.purgeMockData();
+
     if (forceReset || !localStorage.getItem(STORAGE_KEYS.DRIVES)) {
-      this.set(STORAGE_KEYS.DRIVES, INITIAL_DRIVES);
-      this.set(STORAGE_KEYS.ROUNDS, INITIAL_ROUNDS);
-      this.set(STORAGE_KEYS.APPLICATIONS, INITIAL_APPLICATIONS);
-      this.set(STORAGE_KEYS.CANDIDATES, INITIAL_CANDIDATES);
-      this.set(STORAGE_KEYS.BATCHES, INITIAL_BATCHES);
-      this.set(STORAGE_KEYS.BATCH_STUDENTS, INITIAL_BATCH_STUDENTS);
+      this.set(STORAGE_KEYS.DRIVES, []);
+      this.set(STORAGE_KEYS.ROUNDS, []);
+      this.set(STORAGE_KEYS.APPLICATIONS, []);
+      this.set(STORAGE_KEYS.CANDIDATES, []);
+      this.set(STORAGE_KEYS.BATCHES, []);
+      this.set(STORAGE_KEYS.BATCH_STUDENTS, []);
       this.set(STORAGE_KEYS.EVALUATIONS, []);
       this.set(STORAGE_KEYS.ROUND_RESULTS, []);
-      this.set(STORAGE_KEYS.PLACEMENTS, INITIAL_PLACEMENTS);
+      this.set(STORAGE_KEYS.PLACEMENTS, []);
       this.set(STORAGE_KEYS.ARCHIVES, []);
+    }
+  }
+
+  private purgeMockData(): void {
+    try {
+      const storedDrives = this.get<Drive[]>(STORAGE_KEYS.DRIVES, []);
+      const cleanDrives = storedDrives.filter(
+        (d) => !MOCK_DRIVE_IDS.has(d.id) && !MOCK_COMPANY_NAMES.has(d.companyName)
+      );
+      this.set(STORAGE_KEYS.DRIVES, cleanDrives);
+
+      const storedRounds = this.get<DriveRound[]>(STORAGE_KEYS.ROUNDS, []);
+      this.set(
+        STORAGE_KEYS.ROUNDS,
+        storedRounds.filter((r) => !MOCK_DRIVE_IDS.has(r.driveId))
+      );
+
+      const storedApps = this.get<Application[]>(STORAGE_KEYS.APPLICATIONS, []);
+      this.set(
+        STORAGE_KEYS.APPLICATIONS,
+        storedApps.filter((a) => !MOCK_DRIVE_IDS.has(a.driveId))
+      );
+
+      const storedCands = this.get<RoundCandidate[]>(STORAGE_KEYS.CANDIDATES, []);
+      this.set(
+        STORAGE_KEYS.CANDIDATES,
+        storedCands.filter((c) => !MOCK_DRIVE_IDS.has(c.driveId))
+      );
+
+      const storedBatches = this.get<Batch[]>(STORAGE_KEYS.BATCHES, []);
+      const cleanBatches = storedBatches.filter((b) => !MOCK_DRIVE_IDS.has(b.driveId));
+      const cleanBatchIds = new Set(cleanBatches.map((b) => b.id));
+      this.set(STORAGE_KEYS.BATCHES, cleanBatches);
+
+      const storedBatchStudents = this.get<BatchStudent[]>(STORAGE_KEYS.BATCH_STUDENTS, []);
+      this.set(
+        STORAGE_KEYS.BATCH_STUDENTS,
+        storedBatchStudents.filter((bs) => cleanBatchIds.has(bs.batchId))
+      );
+
+      const storedPlacements = this.get<Placement[]>(STORAGE_KEYS.PLACEMENTS, []);
+      this.set(
+        STORAGE_KEYS.PLACEMENTS,
+        storedPlacements.filter(
+          (p) => !MOCK_DRIVE_IDS.has(p.driveId) && !MOCK_COMPANY_NAMES.has(p.companyName)
+        )
+      );
+    } catch (e) {
+      console.warn('Error purging mock data from localStorage:', e);
     }
   }
 
@@ -874,19 +368,21 @@ class IronStorage {
   }
 
   public getDrives(): Drive[] {
-    const raw = this.get<Drive[]>(STORAGE_KEYS.DRIVES, INITIAL_DRIVES);
-    return raw.map((d) => {
-      const companySlug = (d.companyName || 'drive')
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, '');
-      const credentials: DriveCredentials = {
-        coordinatorUsername: d.credentials?.coordinatorUsername || `coord_${companySlug}`,
-        coordinatorPassword: d.credentials?.coordinatorPassword || `coord2026@${companySlug}`,
-        hrUsername: d.credentials?.hrUsername || `hr_${companySlug}`,
-        hrPassword: d.credentials?.hrPassword || `hr2026@${companySlug}`,
-      };
-      return { ...d, credentials };
-    });
+    const raw = this.get<Drive[]>(STORAGE_KEYS.DRIVES, []);
+    return raw
+      .filter((d) => !MOCK_DRIVE_IDS.has(d.id) && !MOCK_COMPANY_NAMES.has(d.companyName))
+      .map((d) => {
+        const companySlug = (d.companyName || 'drive')
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, '');
+        const credentials: DriveCredentials = {
+          coordinatorUsername: d.credentials?.coordinatorUsername || `coord_${companySlug}`,
+          coordinatorPassword: d.credentials?.coordinatorPassword || `coord2026@${companySlug}`,
+          hrUsername: d.credentials?.hrUsername || `hr_${companySlug}`,
+          hrPassword: d.credentials?.hrPassword || `hr2026@${companySlug}`,
+        };
+        return { ...d, credentials };
+      });
   }
 
   public getDriveById(id: string): Drive | undefined {
@@ -1059,13 +555,14 @@ class IronStorage {
 
   // --- ROUNDS ---
   public getRounds(driveId?: string): DriveRound[] {
-    const rounds = this.get<DriveRound[]>(STORAGE_KEYS.ROUNDS, INITIAL_ROUNDS);
+    const rounds = this.get<DriveRound[]>(STORAGE_KEYS.ROUNDS, []);
+    const filtered = rounds.filter((r) => !MOCK_DRIVE_IDS.has(r.driveId));
     if (driveId) {
-      return rounds
+      return filtered
         .filter((r) => r.driveId === driveId)
         .sort((a, b) => a.roundNumber - b.roundNumber);
     }
-    return rounds;
+    return filtered;
   }
 
   public getRoundById(id: string): DriveRound | undefined {
@@ -1167,11 +664,12 @@ class IronStorage {
   }
 
   public getApplications(driveId?: string): Application[] {
-    const apps = this.get<Application[]>(STORAGE_KEYS.APPLICATIONS, INITIAL_APPLICATIONS);
+    const apps = this.get<Application[]>(STORAGE_KEYS.APPLICATIONS, []);
+    const filtered = apps.filter((a) => !MOCK_DRIVE_IDS.has(a.driveId));
     if (driveId) {
-      return apps.filter((a) => a.driveId === driveId);
+      return filtered.filter((a) => a.driveId === driveId);
     }
-    return apps;
+    return filtered;
   }
 
   public applyToDrive(
@@ -1296,7 +794,7 @@ class IronStorage {
         phone: phone.trim(),
         college: studentData.college || 'Institute of Engineering & Technology',
         branch: studentData.branch || 'CSE',
-        department: studentData.department || (studentData.branch === 'CSE' ? 'Computer Science & Engineering' : 'Engineering'),
+        department: studentData.department || BRANCH_DEPARTMENT_MAP[studentData.branch] || 'Engineering',
         academicYear: studentData.academicYear || '2023-2027',
         cgpa: studentData.cgpa !== undefined ? Number(studentData.cgpa) : 7.0,
         backlogCount: studentData.backlogCount ?? studentData.activeBacklogs ?? 0,
@@ -1386,20 +884,22 @@ class IronStorage {
 
   // --- CANDIDATES & ROUND PROGRESSION ---
   public getCandidates(roundId?: string): RoundCandidate[] {
-    const cands = this.get<RoundCandidate[]>(STORAGE_KEYS.CANDIDATES, INITIAL_CANDIDATES);
+    const cands = this.get<RoundCandidate[]>(STORAGE_KEYS.CANDIDATES, []);
+    const filtered = cands.filter((c) => !MOCK_DRIVE_IDS.has(c.driveId));
     if (roundId) {
-      return cands.filter((c) => c.roundId === roundId);
+      return filtered.filter((c) => c.roundId === roundId);
     }
-    return cands;
+    return filtered;
   }
 
   // --- BATCHES ---
   public getBatches(roundId?: string): Batch[] {
-    const batches = this.get<Batch[]>(STORAGE_KEYS.BATCHES, INITIAL_BATCHES);
+    const batches = this.get<Batch[]>(STORAGE_KEYS.BATCHES, []);
+    const filtered = batches.filter((b) => !MOCK_DRIVE_IDS.has(b.driveId));
     if (roundId) {
-      return batches.filter((b) => b.roundId === roundId);
+      return filtered.filter((b) => b.roundId === roundId);
     }
-    return batches;
+    return filtered;
   }
 
   public getBatchById(id: string): Batch | undefined {
@@ -1473,7 +973,7 @@ class IronStorage {
 
   // --- BATCH STUDENTS ---
   public getBatchStudents(batchId?: string): BatchStudent[] {
-    const items = this.get<BatchStudent[]>(STORAGE_KEYS.BATCH_STUDENTS, INITIAL_BATCH_STUDENTS);
+    const items = this.get<BatchStudent[]>(STORAGE_KEYS.BATCH_STUDENTS, []);
     if (batchId) {
       return items.filter((bs) => bs.batchId === batchId);
     }
@@ -1990,11 +1490,14 @@ class IronStorage {
 
   // --- PLACEMENTS ---
   public getPlacements(driveId?: string): Placement[] {
-    const list = this.get<Placement[]>(STORAGE_KEYS.PLACEMENTS, INITIAL_PLACEMENTS);
+    const list = this.get<Placement[]>(STORAGE_KEYS.PLACEMENTS, []);
+    const filtered = list.filter(
+      (p) => !MOCK_DRIVE_IDS.has(p.driveId) && !MOCK_COMPANY_NAMES.has(p.companyName)
+    );
     if (driveId) {
-      return list.filter((p) => p.driveId === driveId);
+      return filtered.filter((p) => p.driveId === driveId);
     }
-    return list;
+    return filtered;
   }
 
   // --- 6-MONTH ARCHIVE & SAFE DRIVE DELETION ---

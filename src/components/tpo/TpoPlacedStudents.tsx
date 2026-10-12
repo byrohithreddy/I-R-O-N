@@ -171,11 +171,16 @@ export const TpoPlacedStudents: React.FC<TpoPlacedStudentsProps> = () => {
             >
               <option value="ALL">All Branches</option>
               <option value="CSE">CSE</option>
+              <option value="CSE-DS">CSE-DS</option>
               <option value="CSE AIML">CSE AIML</option>
+              <option value="CSE-CS">CSE-CS</option>
               <option value="CSIT">CSIT</option>
               <option value="ECE">ECE</option>
               <option value="EEE">EEE</option>
               <option value="MECH">MECH</option>
+              <option value="CIVIL">CIVIL</option>
+              <option value="AERO">AERO</option>
+              <option value="MBA">MBA</option>
             </select>
           </div>
         </div>
