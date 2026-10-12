@@ -1,6 +1,15 @@
 import React, { useState } from 'react';
 import { User } from '../../types';
-import { ShieldCheck, UserCheck, Briefcase, LogOut, ArrowRight, Menu, X } from 'lucide-react';
+import {
+  ArrowRight,
+  Briefcase,
+  BriefcaseBusiness,
+  LogOut,
+  Menu,
+  ShieldCheck,
+  UserCheck,
+  X,
+} from 'lucide-react';
 import iconSrc from '../../icon.svg';
 
 interface HeaderProps {
@@ -11,6 +20,31 @@ interface HeaderProps {
   onLogout: () => void;
 }
 
+interface NavigationItem {
+  label: string;
+  view: string;
+}
+
+const PUBLIC_NAVIGATION: NavigationItem[] = [
+  { label: 'Recruitment drives', view: 'public-drives' },
+  { label: 'About IRON', view: 'about' },
+];
+
+const ROLE_NAVIGATION: Record<User['role'], NavigationItem[]> = {
+  TPO: [
+    { label: 'Overview', view: 'tpo-dashboard' },
+    { label: 'Manage drives', view: 'tpo-drives' },
+    { label: 'Student records', view: 'tpo-students' },
+    { label: 'Placements', view: 'tpo-placements' },
+    { label: 'Data archive', view: 'tpo-expiry' },
+  ],
+  COORDINATOR: [
+    { label: 'Assigned drive', view: 'coordinator-dashboard' },
+    { label: 'Batch management', view: 'coordinator-batches' },
+  ],
+  HR: [{ label: 'Evaluation console', view: 'hr-dashboard' }],
+};
+
 export const Header: React.FC<HeaderProps> = ({
   currentUser,
   currentView,
@@ -19,311 +53,152 @@ export const Header: React.FC<HeaderProps> = ({
   onLogout,
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const navigation = currentUser ? ROLE_NAVIGATION[currentUser.role] : PUBLIC_NAVIGATION;
+  const roleIcon =
+    currentUser?.role === 'TPO' ? (
+      <ShieldCheck className="h-4 w-4" />
+    ) : currentUser?.role === 'COORDINATOR' ? (
+      <UserCheck className="h-4 w-4" />
+    ) : (
+      <Briefcase className="h-4 w-4" />
+    );
 
   const handleNavigate = (view: string) => {
     setIsMobileMenuOpen(false);
     onNavigate(view);
   };
 
-  return (
-    <header className="sticky top-0 z-40 w-full bg-white border-b border-zinc-200">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
-        {/* Zone 1: Single element brand wordmark */}
-        <div className="flex items-center gap-3">
+  const renderNavigation = (mobile = false) => (
+    <nav
+      aria-label={currentUser ? `${currentUser.role} navigation` : 'Main navigation'}
+      className={mobile ? 'flex flex-col gap-1' : 'flex items-center gap-1 overflow-x-auto'}
+    >
+      {navigation.map(({ label, view }) => {
+        const isActive = currentView === view;
+        return (
           <button
-            onClick={() => handleNavigate(currentUser ? `${currentUser.role.toLowerCase()}-home` : 'public-drives')}
-            className="flex items-center gap-2 text-left group"
+            key={view}
+            type="button"
+            aria-current={isActive ? 'page' : undefined}
+            onClick={() => handleNavigate(view)}
+            className={`whitespace-nowrap rounded-lg font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300 ${
+              mobile
+                ? `px-3.5 py-3 text-left text-sm ${
+                    isActive
+                      ? 'bg-white/10 text-white'
+                      : 'text-zinc-300 hover:bg-white/[0.06] hover:text-white'
+                  }`
+                : `px-3 py-2 text-xs ${
+                    isActive
+                      ? 'bg-[#1f332b] text-lime-200'
+                      : 'text-zinc-400 hover:bg-white/[0.06] hover:text-white'
+                  }`
+            }`}
           >
-            <img src={iconSrc} alt="IRON Logo" className="w-6 h-6" />
-            <span className="text-xl font-bold tracking-tight text-zinc-950">IRON</span>
-            <span className="hidden sm:inline text-xs text-zinc-400 font-mono tracking-widest uppercase">
-              / Placement Ops
+            {label}
+          </button>
+        );
+      })}
+    </nav>
+  );
+
+  return (
+    <header className="app-header sticky top-0 z-40 w-full text-white">
+      <div className="border-b border-white/[0.08] bg-[#14221c]">
+        <div className="mx-auto flex h-[62px] max-w-[1440px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+          <button
+            type="button"
+            onClick={() => handleNavigate(currentUser ? `${currentUser.role.toLowerCase()}-home` : 'public-drives')}
+            className="group flex items-center gap-2.5 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300"
+            aria-label="IRON home"
+          >
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-lime-200/15 bg-lime-200/10">
+              <img src={iconSrc} alt="" className="h-5 w-5" />
+            </span>
+            <span className="text-lg font-bold tracking-[-0.04em] text-white">IRON</span>
+            <span className="hidden border-l border-white/15 pl-2.5 text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-400 sm:inline">
+              Placement operations
             </span>
           </button>
-        </div>
 
-        {/* Zone 2: Navigation Links */}
-        <nav className="hidden md:flex items-center gap-6 text-xs font-medium text-zinc-600">
-          {!currentUser ? (
-            <>
-              <button
-                onClick={() => handleNavigate('public-drives')}
-                className={`transition-colors py-1 ${
-                  currentView === 'public-drives'
-                    ? 'text-zinc-950 font-semibold border-b-2 border-zinc-950'
-                    : 'hover:text-zinc-950'
-                }`}
-              >
-                Recruitment Drives
-              </button>
-              <button
-                onClick={() => handleNavigate('about')}
-                className={`transition-colors py-1 ${
-                  currentView === 'about'
-                    ? 'text-zinc-950 font-semibold border-b-2 border-zinc-950'
-                    : 'hover:text-zinc-950'
-                }`}
-              >
-                About IRON
-              </button>
-            </>
-          ) : currentUser.role === 'TPO' ? (
-            <>
-              <button
-                onClick={() => handleNavigate('tpo-dashboard')}
-                className={`transition-colors py-1 ${
-                  currentView === 'tpo-dashboard'
-                    ? 'text-zinc-950 font-semibold border-b-2 border-zinc-950'
-                    : 'hover:text-zinc-950'
-                }`}
-              >
-                Dashboard
-              </button>
-              <button
-                onClick={() => handleNavigate('tpo-drives')}
-                className={`transition-colors py-1 ${
-                  currentView === 'tpo-drives'
-                    ? 'text-zinc-950 font-semibold border-b-2 border-zinc-950'
-                    : 'hover:text-zinc-950'
-                }`}
-              >
-                Manage Drives
-              </button>
-              <button
-                onClick={() => handleNavigate('tpo-students')}
-                className={`transition-colors py-1 ${
-                  currentView === 'tpo-students'
-                    ? 'text-zinc-950 font-semibold border-b-2 border-zinc-950'
-                    : 'hover:text-zinc-950'
-                }`}
-              >
-                Student Master DB
-              </button>
-              <button
-                onClick={() => handleNavigate('tpo-placements')}
-                className={`transition-colors py-1 ${
-                  currentView === 'tpo-placements'
-                    ? 'text-zinc-950 font-semibold border-b-2 border-zinc-950'
-                    : 'hover:text-zinc-950'
-                }`}
-              >
-                Placed Students
-              </button>
-              <button
-                onClick={() => handleNavigate('tpo-expiry')}
-                className={`transition-colors py-1 ${
-                  currentView === 'tpo-expiry'
-                    ? 'text-zinc-950 font-semibold border-b-2 border-zinc-950'
-                    : 'hover:text-zinc-950'
-                }`}
-              >
-                Data Expiry & Archive
-              </button>
-            </>
-          ) : currentUser.role === 'COORDINATOR' ? (
-            <>
-              <button
-                onClick={() => handleNavigate('coordinator-dashboard')}
-                className={`transition-colors py-1 ${
-                  currentView === 'coordinator-dashboard'
-                    ? 'text-zinc-950 font-semibold border-b-2 border-zinc-950'
-                    : 'hover:text-zinc-950'
-                }`}
-              >
-                Assigned Drive
-              </button>
-              <button
-                onClick={() => handleNavigate('coordinator-batches')}
-                className={`transition-colors py-1 ${
-                  currentView === 'coordinator-batches'
-                    ? 'text-zinc-950 font-semibold border-b-2 border-zinc-950'
-                    : 'hover:text-zinc-950'
-                }`}
-              >
-                Batch Management
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={() => handleNavigate('hr-dashboard')}
-                className={`transition-colors py-1 ${
-                  currentView === 'hr-dashboard'
-                    ? 'text-zinc-950 font-semibold border-b-2 border-zinc-950'
-                    : 'hover:text-zinc-950'
-                }`}
-              >
-                HR Evaluation Console
-              </button>
-            </>
-          )}
-        </nav>
-
-        {/* Zone 3: Actions & User Info */}
-        <div className="flex items-center gap-2 sm:gap-3">
-          {currentUser ? (
-            <div className="flex items-center gap-2">
-              <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 text-xs border border-zinc-200 rounded bg-zinc-50">
-                {currentUser.role === 'TPO' ? (
-                  <ShieldCheck className="w-3.5 h-3.5 text-zinc-700" />
-                ) : currentUser.role === 'COORDINATOR' ? (
-                  <UserCheck className="w-3.5 h-3.5 text-zinc-700" />
-                ) : (
-                  <Briefcase className="w-3.5 h-3.5 text-zinc-700" />
-                )}
-                <span className="font-semibold text-zinc-900">{currentUser.role}</span>
-                <span className="text-zinc-400">·</span>
-                <span className="text-zinc-600 truncate max-w-[120px]">
-                  {currentUser.companyName || currentUser.username}
-                </span>
-              </div>
-              <button
-                onClick={onLogout}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:text-zinc-950 hover:bg-zinc-100 rounded border border-zinc-200 transition-colors whitespace-nowrap"
-                title="Logout"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Logout</span>
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={onOpenLogin}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-zinc-900 hover:bg-zinc-800 rounded transition-colors whitespace-nowrap"
-              >
-                <span>Staff & HR Login</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
-
-          {/* Mobile Menu Toggle */}
-          <button
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="md:hidden flex items-center justify-center p-2 text-zinc-700 hover:bg-zinc-100 rounded transition-colors"
-          >
-            {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
-        </div>
-      </div>
-
-      {/* Mobile Menu Panel */}
-      {isMobileMenuOpen && (
-        <div className="md:hidden border-t border-zinc-200 bg-white px-4 py-3 shadow-lg">
-          <nav className="flex flex-col gap-3 text-sm font-medium text-zinc-600">
-            {!currentUser ? (
+          <div className="flex items-center gap-2 sm:gap-3">
+            {currentUser ? (
               <>
+                <div className="hidden items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-1.5 sm:flex">
+                  <span className="text-lime-200">{roleIcon}</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.13em] text-zinc-300">
+                    {currentUser.role}
+                  </span>
+                  <span className="h-3 w-px bg-white/15" />
+                  <span className="max-w-[150px] truncate text-xs text-white">
+                    {currentUser.companyName || currentUser.username}
+                  </span>
+                </div>
                 <button
-                  onClick={() => handleNavigate('public-drives')}
-                  className={`text-left px-2 py-1.5 rounded transition-colors ${
-                    currentView === 'public-drives' ? 'bg-zinc-100 text-zinc-950 font-semibold' : 'hover:bg-zinc-50'
-                  }`}
+                  type="button"
+                  onClick={onLogout}
+                  className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/15 px-3 text-xs font-medium text-zinc-200 transition-colors hover:border-white/30 hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300"
+                  title="Logout"
                 >
-                  Recruitment Drives
-                </button>
-                <button
-                  onClick={() => handleNavigate('about')}
-                  className={`text-left px-2 py-1.5 rounded transition-colors ${
-                    currentView === 'about' ? 'bg-zinc-100 text-zinc-950 font-semibold' : 'hover:bg-zinc-50'
-                  }`}
-                >
-                  About IRON
-                </button>
-              </>
-            ) : currentUser.role === 'TPO' ? (
-              <>
-                <button
-                  onClick={() => handleNavigate('tpo-dashboard')}
-                  className={`text-left px-2 py-1.5 rounded transition-colors ${
-                    currentView === 'tpo-dashboard' ? 'bg-zinc-100 text-zinc-950 font-semibold' : 'hover:bg-zinc-50'
-                  }`}
-                >
-                  Dashboard
-                </button>
-                <button
-                  onClick={() => handleNavigate('tpo-drives')}
-                  className={`text-left px-2 py-1.5 rounded transition-colors ${
-                    currentView === 'tpo-drives' ? 'bg-zinc-100 text-zinc-950 font-semibold' : 'hover:bg-zinc-50'
-                  }`}
-                >
-                  Manage Drives
-                </button>
-                <button
-                  onClick={() => handleNavigate('tpo-students')}
-                  className={`text-left px-2 py-1.5 rounded transition-colors ${
-                    currentView === 'tpo-students' ? 'bg-zinc-100 text-zinc-950 font-semibold' : 'hover:bg-zinc-50'
-                  }`}
-                >
-                  Student Master DB
-                </button>
-                <button
-                  onClick={() => handleNavigate('tpo-placements')}
-                  className={`text-left px-2 py-1.5 rounded transition-colors ${
-                    currentView === 'tpo-placements' ? 'bg-zinc-100 text-zinc-950 font-semibold' : 'hover:bg-zinc-50'
-                  }`}
-                >
-                  Placed Students
-                </button>
-                <button
-                  onClick={() => handleNavigate('tpo-expiry')}
-                  className={`text-left px-2 py-1.5 rounded transition-colors ${
-                    currentView === 'tpo-expiry' ? 'bg-zinc-100 text-zinc-950 font-semibold' : 'hover:bg-zinc-50'
-                  }`}
-                >
-                  Data Expiry & Archive
-                </button>
-              </>
-            ) : currentUser.role === 'COORDINATOR' ? (
-              <>
-                <button
-                  onClick={() => handleNavigate('coordinator-dashboard')}
-                  className={`text-left px-2 py-1.5 rounded transition-colors ${
-                    currentView === 'coordinator-dashboard' ? 'bg-zinc-100 text-zinc-950 font-semibold' : 'hover:bg-zinc-50'
-                  }`}
-                >
-                  Assigned Drive
-                </button>
-                <button
-                  onClick={() => handleNavigate('coordinator-batches')}
-                  className={`text-left px-2 py-1.5 rounded transition-colors ${
-                    currentView === 'coordinator-batches' ? 'bg-zinc-100 text-zinc-950 font-semibold' : 'hover:bg-zinc-50'
-                  }`}
-                >
-                  Batch Management
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Sign out</span>
                 </button>
               </>
             ) : (
-              <>
-                <button
-                  onClick={() => handleNavigate('hr-dashboard')}
-                  className={`text-left px-2 py-1.5 rounded transition-colors ${
-                    currentView === 'hr-dashboard' ? 'bg-zinc-100 text-zinc-950 font-semibold' : 'hover:bg-zinc-50'
-                  }`}
-                >
-                  HR Evaluation Console
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={onOpenLogin}
+                className="inline-flex h-9 items-center gap-2 rounded-lg bg-lime-300 px-3.5 text-xs font-semibold text-[#17231e] transition-colors hover:bg-lime-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#14221c]"
+              >
+                <span>Staff & HR login</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
             )}
-            
-            {/* Mobile User Info (if logged in) */}
+            <button
+              type="button"
+              aria-label={isMobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+              aria-expanded={isMobileMenuOpen}
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300 md:hidden"
+            >
+              {isMobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="border-b border-white/[0.08] bg-[#192820]">
+        <div className="mx-auto hidden max-w-[1440px] items-center justify-between gap-6 px-4 sm:px-6 md:flex lg:px-8">
+          {renderNavigation()}
+          {currentUser ? (
+            <div className="flex shrink-0 items-center gap-2 py-2 text-[10px] text-zinc-500">
+              <BriefcaseBusiness className="h-3.5 w-3.5 text-lime-300/80" />
+              Secure workspace
+            </div>
+          ) : (
+            <div className="flex shrink-0 items-center gap-2 py-2 text-[10px] text-zinc-500">
+              <ShieldCheck className="h-3.5 w-3.5 text-lime-300/80" />
+              Student access · no account needed
+            </div>
+          )}
+        </div>
+      </div>
+
+      {isMobileMenuOpen && (
+        <div className="border-b border-white/10 bg-[#17251f] px-4 py-3 shadow-xl md:hidden">
+          <div className="mx-auto max-w-[1440px]">
             {currentUser && (
-              <div className="mt-2 pt-3 border-t border-zinc-200">
-                <div className="flex items-center gap-2 px-2 py-1.5">
-                  {currentUser.role === 'TPO' ? (
-                    <ShieldCheck className="w-4 h-4 text-zinc-700" />
-                  ) : currentUser.role === 'COORDINATOR' ? (
-                    <UserCheck className="w-4 h-4 text-zinc-700" />
-                  ) : (
-                    <Briefcase className="w-4 h-4 text-zinc-700" />
-                  )}
-                  <span className="font-semibold text-zinc-900">{currentUser.role}</span>
-                  <span className="text-zinc-400">·</span>
-                  <span className="text-zinc-600 truncate">{currentUser.companyName || currentUser.username}</span>
-                </div>
+              <div className="mb-2 flex items-center gap-2 border-b border-white/10 px-3 pb-3 pt-1 text-xs">
+                <span className="text-lime-200">{roleIcon}</span>
+                <span className="font-semibold text-white">{currentUser.role}</span>
+                <span className="text-zinc-500">/</span>
+                <span className="truncate text-zinc-300">
+                  {currentUser.companyName || currentUser.username}
+                </span>
               </div>
             )}
-          </nav>
+            {renderNavigation(true)}
+          </div>
         </div>
       )}
     </header>

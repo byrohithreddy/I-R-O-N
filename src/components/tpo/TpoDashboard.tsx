@@ -173,7 +173,27 @@ export const TpoDashboard: React.FC<TpoDashboardProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-200">
-              {drives.map((d) => {
+              {drives.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-12 text-center">
+                    <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-[#edf3e8] text-emerald-900">
+                      <Briefcase className="h-5 w-5" />
+                    </div>
+                    <p className="mt-3 text-sm font-semibold text-zinc-900">No placement drives yet</p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      Create a drive to start coordinating your next campus recruitment.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={onCreateDrive}
+                      className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-zinc-950 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Create your first drive
+                    </button>
+                  </td>
+                </tr>
+              ) : drives.map((d) => {
                 const apps = ironStorage.getApplications(d.id);
                 return (
                   <tr key={d.id} className="hover:bg-zinc-50/50">

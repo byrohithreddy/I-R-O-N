@@ -99,7 +99,7 @@ export default function App() {
   const drives = ironStorage.getDrives();
 
   return (
-    <div className="min-h-screen bg-white text-zinc-950 flex flex-col font-sans">
+    <div className="app-frame min-h-screen flex flex-col font-sans text-zinc-950">
       {/* Universal Top Bar */}
       <Header
         currentUser={currentUser}
@@ -110,7 +110,11 @@ export default function App() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
+      <main
+        className={`app-main flex-1 w-full max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 ${
+          currentUser ? 'app-admin' : 'app-public'
+        }`}
+      >
         {/* PUBLIC VIEWS */}
         {!currentUser && (
           <>
@@ -173,10 +177,10 @@ export default function App() {
       </main>
 
       {/* Minimal Footer */}
-      <footer className="border-t border-zinc-200 bg-zinc-50/60 py-6 text-xs text-zinc-500">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <footer className="app-footer border-t border-zinc-200 bg-white py-6 text-xs text-zinc-500">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-zinc-900">IRON</span>
+            <span className="font-bold tracking-tight text-zinc-950">IRON</span>
             <span>·</span>
             <span>Integrated Recruitment Operations Navigator</span>
           </div>
@@ -186,7 +190,7 @@ export default function App() {
               href="https://github.com/byrohithreddy/I-R-O-N"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 font-medium text-zinc-700 hover:text-zinc-950 transition-colors"
+              className="inline-flex items-center gap-1.5 font-medium text-zinc-700 hover:text-emerald-900 transition-colors"
             >
               <Github className="w-3.5 h-3.5" />
               <span>System Architecture</span>

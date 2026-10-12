@@ -1,16 +1,19 @@
 import React from 'react';
 import { Drive } from '../../types';
 import { StatusBadge } from '../common/StatusBadge';
+import { SpotlightCard } from '../reactbits/SpotlightCard';
 import { Calendar, MapPin, Award, ArrowUpRight } from 'lucide-react';
 
 interface DriveCardProps {
   drive: Drive;
+  delay?: number;
   onApply: (drive: Drive) => void;
   onViewDetails: (drive: Drive) => void;
 }
 
 export const DriveCard: React.FC<DriveCardProps> = ({
   drive,
+  delay = 0,
   onApply,
   onViewDetails,
 }) => {
@@ -18,7 +21,10 @@ export const DriveCard: React.FC<DriveCardProps> = ({
   const isApplicationOpen = !isDeadlinePassed && drive.status !== 'CANCELLED' && drive.status !== 'COMPLETED';
 
   return (
-    <div className="border border-zinc-200 bg-white rounded-lg p-5 flex flex-col justify-between hover:border-zinc-400 transition-colors">
+    <SpotlightCard
+      delay={delay}
+      className="flex min-h-full flex-col justify-between rounded-xl border border-zinc-200 bg-white p-5 transition-colors hover:border-zinc-400"
+    >
       <div>
         {/* Top line: Status & Package */}
         <div className="flex items-start justify-between gap-2 mb-3">
@@ -97,6 +103,6 @@ export const DriveCard: React.FC<DriveCardProps> = ({
           </span>
         )}
       </div>
-    </div>
+    </SpotlightCard>
   );
 };
