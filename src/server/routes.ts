@@ -1838,6 +1838,61 @@ apiRouter.get('/round-results/round/:roundId', authMiddleware, roleMiddleware(['
   }
 });
 
+// POST /api/evaluations/bulk (HR In-flight Decisions)
+apiRouter.post('/evaluations/bulk', authMiddleware, roleMiddleware(['HR', 'TPO']), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const db = getDatabase();
+    const batchId = String(req.body?.batchId || '');
+    const decisions = Array.isArray(req.body?.decisions) ? req.body.decisions : [];
+    if (!batchId || decisions.length === 0 || decisions.length > 500) {
+      return res.status(400).json({ error: 'batchId and 1–500 decisions are required' });
+    }
+
+    const batch = await db.prepare('SELECT * FROM batches WHERE id = ?').bind(batchId).first<any>();
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    if (req.user?.role !== 'TPO' && req.user?.driveId && req.user.driveId !== batch.drive_id) {
+      return res.status(403).json({ error: 'Forbidden: Cross-drive operations are prohibited' });
+    }
+    const round = await db.prepare('SELECT * FROM rounds WHERE id = ?').bind(batch.round_id).first<any>();
+    if (!round) return res.status(404).json({ error: 'Round not found' });
+
+    const latestByStudent = new Map<string, 'SELECT' | 'HOLD' | 'NONE'>();
+    for (const item of decisions) {
+      const studentId = String(item?.studentId || '');
+      const action = item?.action;
+      if (!studentId || !['SELECT', 'HOLD', 'NONE'].includes(action)) {
+        return res.status(400).json({ error: 'Each decision requires a studentId and SELECT, HOLD, or NONE action' });
+      }
+      if (round.is_final_round && action === 'HOLD') {
+        return res.status(400).json({ error: 'HOLD is not permitted in the Final Round' });
+      }
+      latestByStudent.set(studentId, action);
+    }
+
+    const students = Array.from(latestByStudent.keys());
+    const memberships = await Promise.all(students.map((studentId) =>
+      db.prepare('SELECT id FROM batch_students WHERE batch_id = ? AND student_id = ?').bind(batchId, studentId).first<any>()
+    ));
+    if (memberships.some((membership) => !membership)) {
+      return res.status(400).json({ error: 'Every student must belong to the specified batch' });
+    }
+
+    const statements = Array.from(latestByStudent.entries()).map(([studentId, action]) => {
+      if (action === 'NONE') {
+        return db.prepare('DELETE FROM evaluations WHERE batch_id = ? AND student_id = ?').bind(batchId, studentId);
+      }
+      return db.prepare(
+        `INSERT OR REPLACE INTO evaluations (id, batch_id, round_id, student_id, action, notes, evaluated_at, evaluated_by)
+         VALUES (?, ?, ?, ?, ?, '', datetime('now'), ?)`
+      ).bind(`eval_${batchId}_${studentId}`, batchId, batch.round_id, studentId, action, req.user?.username || 'HR');
+    });
+    await db.batch(statements);
+    return res.json({ success: true, savedCount: latestByStudent.size });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/evaluations (HR In-flight Decision)
 apiRouter.post('/evaluations', authMiddleware, roleMiddleware(['HR', 'TPO']), async (req: AuthenticatedRequest, res: Response) => {
   try {
