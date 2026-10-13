@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { User, Drive, DriveRound, Batch, BatchStudent, Student, RoundCandidate } from '../../types';
 import { ironStorage } from '../../services/storage';
+import { formatIstTimestamp } from '../../utils/date';
 import { StatusBadge } from '../common/StatusBadge';
 import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
@@ -613,7 +614,7 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
                         <span>BATCH FROZEN & LOCKED</span>
                       </div>
                       <span className="text-[11px] font-mono text-zinc-500">
-                        Submitted: {activeBatch.submittedAt ? new Date(activeBatch.submittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Official HR Record'}
+                        Submitted: {activeBatch.submittedAt ? formatIstTimestamp(activeBatch.submittedAt, { hour: '2-digit', minute: '2-digit' }) : 'Official HR Record'}
                       </span>
                     </div>
 
