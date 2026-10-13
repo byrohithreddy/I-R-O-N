@@ -13,6 +13,8 @@
  *    - Ineligible candidates in Round 1 = 0
  */
 
+import { addCalendarDays, getIstCalendarDate } from '../src/utils/date';
+
 interface SimulationResult {
   totalRequests: number;
   successfulApplications: number;
@@ -100,9 +102,7 @@ export async function runConcurrencyTest(
 
   // 3. Create or select a dedicated, open upcoming test drive
   const testDriveId = `drv_stress_${Date.now()}`;
-  const futureDate = new Date();
-  futureDate.setDate(futureDate.getDate() + 30);
-  const driveDateStr = futureDate.toISOString().split('T')[0];
+  const driveDateStr = addCalendarDays(getIstCalendarDate(), 30);
 
   console.log(`Setting up dedicated high-concurrency drive "${testDriveId}"...`);
   const createDriveRes = await fetch(`${apiBaseUrl}/drives`, {
