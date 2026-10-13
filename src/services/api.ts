@@ -246,7 +246,7 @@ export const api = {
       return request(`/round-results/round/${roundId}`);
     },
 
-    async evaluate(payload: { batchId: string; roundId: string; studentId: string; action: 'SELECT' | 'HOLD' | 'REJECT'; notes?: string }): Promise<any> {
+    async evaluate(payload: { batchId: string; roundId: string; studentId: string; action: 'SELECT' | 'HOLD' | 'NONE' | 'REJECT'; notes?: string }): Promise<any> {
       return request('/evaluations', {
         method: 'POST',
         body: JSON.stringify(payload),
