@@ -1,6 +1,8 @@
 // Cloudflare Pages Function: /api/* Edge API Router
 // Powered by Cloudflare Workers Runtime & Cloudflare D1 (SQLite)
 
+import { addCalendarMonths, calculateIstApplicationDeadline, getIstCalendarDate } from '../../src/utils/date';
+
 interface D1Result<T = any> {
   results: T[];
   success: boolean;
@@ -97,18 +99,6 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     AERO: 'Aeronautical Engineering',
     MBA: 'Master of Business Administration',
   };
-
-  function calculateIstApplicationDeadline(driveDate: string): string {
-    if (!driveDate) return new Date().toISOString();
-    const cleanDate = driveDate.trim().split('T')[0];
-    const parts = cleanDate.split('-').map(Number);
-    if (parts.length !== 3 || parts.some(isNaN)) {
-      return `${cleanDate}T00:00:00Z`;
-    }
-    const [year, month, day] = parts;
-    const istDateMs = Date.UTC(year, month - 1, day, 0, 0, 0) - (5.5 * 60 * 60 * 1000);
-    return new Date(istDateMs).toISOString();
-  }
 
   // Real Web Crypto HMAC-SHA256 JWT Signature Verification
   const getAuthUser = async (): Promise<any | null> => {
@@ -578,12 +568,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       if (auth.error) return auth.error;
 
       const d = (await request.json()) as any;
-      const driveDate = d.driveDate || new Date().toISOString().split('T')[0];
+      const driveDate = d.driveDate || getIstCalendarDate();
       const applicationDeadline = calculateIstApplicationDeadline(driveDate);
-      const driveDateObj = new Date(driveDate);
-      const retentionDate = new Date(driveDateObj);
-      retentionDate.setMonth(retentionDate.getMonth() + 6);
-      const retentionExpiresAt = retentionDate.toISOString().split('T')[0];
+      const retentionExpiresAt = addCalendarMonths(driveDate, 6);
 
       const driveId = d.id || `drv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
       const companySlug = (d.companyName || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -767,8 +754,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const minimumCgpa = d.minimumCgpa !== undefined ? Number(d.minimumCgpa) : (existingDrive.minimum_cgpa ?? 7.0);
       const backlogRule = d.backlogRule !== undefined ? (d.backlogRule === 'NOT_APPLICABLE' ? 'NOT_APPLICABLE' : Number(d.backlogRule)) : (existingDrive.backlog_rule ?? 0);
       const eligibleBranches = d.eligibleBranches ? JSON.stringify(d.eligibleBranches) : (existingDrive.eligible_branches ?? '["CSE","IT","ECE"]');
-      const driveDate = d.driveDate ?? existingDrive.drive_date ?? new Date().toISOString().split('T')[0];
+      const driveDate = d.driveDate ?? existingDrive.drive_date ?? getIstCalendarDate();
       const applicationDeadline = d.applicationDeadline ?? calculateIstApplicationDeadline(driveDate);
+      const retentionExpiresAt = addCalendarMonths(driveDate, 6);
       const driveTime = d.driveTime ?? existingDrive.drive_time ?? '09:00';
       const location = d.location ?? existingDrive.location ?? 'Auditorium';
       const status = d.status ?? existingDrive.status ?? 'UPCOMING';
@@ -787,6 +775,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
              drive_time = ?,
              location = ?,
              application_deadline = ?,
+             retention_expires_at = ?,
              status = ?,
              updated_at = datetime('now')
          WHERE id = ?`
@@ -804,6 +793,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           driveTime,
           location,
           applicationDeadline,
+          retentionExpiresAt,
           status,
           driveId
         )
@@ -822,6 +812,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         driveDate,
         driveTime,
         location,
+        retentionExpiresAt,
         status,
       });
     }
