@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { Drive, Application, Student, DriveRound, RoundCandidate, Placement, RoundResult } from '../types';
+import { formatIstTimestamp, getIstCalendarDate } from '../utils/date';
 
 interface ExportApplicationsParams {
   drive: Drive;
@@ -103,7 +104,7 @@ export function exportApplicationsToExcel({
   XLSX.utils.book_append_sheet(workbook, worksheet, safeSheetName);
 
   const cleanCompanyName = drive.companyName.replace(/[^a-zA-Z0-9_-]/g, '_');
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = getIstCalendarDate();
   const fileName = `${cleanCompanyName}_All_Applications_${dateStr}.xlsx`;
 
   XLSX.writeFile(workbook, fileName);
@@ -133,7 +134,7 @@ export function exportSelectedStudentsToExcel({
       'Company Name': placement.companyName || drive.companyName,
       'Job Role': placement.jobRole || drive.jobRole,
       'Package (CTC)': placement.package || drive.package,
-      'Selection Date': placement.selectedAt ? new Date(placement.selectedAt).toLocaleDateString() : new Date().toLocaleDateString(),
+      'Selection Date': placement.selectedAt ? formatIstTimestamp(placement.selectedAt, { dateStyle: 'medium' }) : formatIstTimestamp(new Date(), { dateStyle: 'medium' }),
       'Status': 'CONFIRMED OFFER',
     };
   });
