@@ -61,6 +61,17 @@ class IronStorage {
   private lastSyncFingerprint = '';
   private pendingEvaluationWrites = new Map<string, { evaluation: Evaluation; timestamp: number }>();
   private pendingEvaluationPromises = new Map<string, Promise<any>>();
+  private evaluationSaveQueues = new Map<string, {
+    timer?: ReturnType<typeof setTimeout>;
+    items: Array<{
+      studentId: string;
+      action: 'SELECT' | 'HOLD' | 'NONE';
+      updated: Evaluation;
+      previous?: Evaluation;
+      resolve: (value: Evaluation) => void;
+      reject: (reason: Error) => void;
+    }>;
+  }>();
   private memoryCache: Map<string, any> = new Map();
   private studentsCache: Student[] = [];
 
@@ -1352,6 +1363,52 @@ class IronStorage {
     return updated;
   }
 
+  private async flushEvaluationSaveQueue(batchId: string): Promise<void> {
+    const queue = this.evaluationSaveQueues.get(batchId);
+    if (!queue) return;
+    this.evaluationSaveQueues.delete(batchId);
+    if (queue.timer) clearTimeout(queue.timer);
+    if (queue.items.length === 0) return;
+
+    const latestByStudent = new Map<string, typeof queue.items[number]>();
+    for (const item of queue.items) latestByStudent.set(item.studentId, item);
+    try {
+      const response = await api.evaluations.evaluateBulk({
+        batchId,
+        decisions: Array.from(latestByStudent.values()).map(({ studentId, action }) => ({ studentId, action })),
+      });
+      if (!response?.success) throw new Error('The server did not confirm evaluation saves.');
+
+      for (const item of queue.items) {
+        const key = `${batchId}:${item.studentId}`;
+        if (this.pendingEvaluationWrites.get(key)?.evaluation.evaluatedAt === item.updated.evaluatedAt) {
+          this.pendingEvaluationWrites.delete(key);
+        }
+        item.resolve(item.updated);
+      }
+    } catch (err: any) {
+      // Roll back once per student to the state before this debounce group, but only if no newer
+      // user action has replaced the latest optimistic value.
+      const current = this.getEvaluations();
+      for (const [studentId, latest] of latestByStudent) {
+        const key = `${batchId}:${studentId}`;
+        const first = queue.items.find((item) => item.studentId === studentId)!;
+        const index = current.findIndex((e) => e.batchId === batchId && e.studentId === studentId);
+        if (index >= 0 && current[index].evaluatedAt === latest.updated.evaluatedAt) {
+          if (first.previous) current[index] = first.previous;
+          else current.splice(index, 1);
+        }
+        if (this.pendingEvaluationWrites.get(key)?.evaluation.evaluatedAt === latest.updated.evaluatedAt) {
+          this.pendingEvaluationWrites.delete(key);
+        }
+      }
+      this.set(STORAGE_KEYS.EVALUATIONS, current);
+      this.notifyListeners();
+      const error = new Error(`Server rejection: ${err?.message || err}`);
+      queue.items.forEach((item) => item.reject(error));
+    }
+  }
+
   public async saveEvaluationAsync(
     batchId: string,
     batchStudentId: string,
@@ -1370,45 +1427,31 @@ class IronStorage {
       throw new Error('Rule 22: HOLD is not permitted in the Final Round.');
     }
 
-    const evals = this.getEvaluations();
     const key = `${batchId}:${studentId}`;
+    const evals = this.getEvaluations();
     const previous = evals.find((e) => e.batchId === batchId && e.studentId === studentId);
     const updated = this.saveEvaluation(batchId, batchStudentId, studentId, action, allowSubmittedEdit, false);
     this.pendingEvaluationWrites.set(key, { evaluation: updated, timestamp: Date.now() });
 
-    const requestKey = `${key}:${updated.evaluatedAt || Date.now()}`;
-    const writePromise = api.evaluations.evaluate({
-      batchId,
-      roundId: batch.roundId,
-      studentId,
-      action,
+    const requestPromise = new Promise<Evaluation>((resolve, reject) => {
+      let queue = this.evaluationSaveQueues.get(batchId);
+      if (!queue) {
+        queue = { items: [] };
+        this.evaluationSaveQueues.set(batchId, queue);
+      }
+      if (queue.timer) clearTimeout(queue.timer);
+      queue.items.push({ studentId, action, updated, previous, resolve, reject });
+      queue.timer = setTimeout(() => {
+        this.flushEvaluationSaveQueue(batchId).catch((err) => {
+          console.error('Bulk evaluation save failed:', err);
+        });
+      }, 400);
     });
-    this.pendingEvaluationPromises.set(requestKey, writePromise);
 
-    try {
-      await writePromise;
-      if (this.pendingEvaluationWrites.get(key)?.evaluation.evaluatedAt === updated.evaluatedAt) {
-        this.pendingEvaluationWrites.delete(key);
-      }
-    } catch (err: any) {
-      // Roll back only this student's decision, and only if no newer click replaced it.
-      const current = this.getEvaluations();
-      const index = current.findIndex((e) => e.batchId === batchId && e.studentId === studentId);
-      if (index >= 0 && current[index].evaluatedAt === updated.evaluatedAt) {
-        if (previous) current[index] = previous;
-        else current.splice(index, 1);
-        this.set(STORAGE_KEYS.EVALUATIONS, current);
-        this.notifyListeners();
-      }
-      if (this.pendingEvaluationWrites.get(key)?.evaluation.evaluatedAt === updated.evaluatedAt) {
-        this.pendingEvaluationWrites.delete(key);
-      }
-      throw new Error(`Server rejection: ${err.message || err}`);
-    } finally {
-      this.pendingEvaluationPromises.delete(requestKey);
-    }
-
-    return updated;
+    const requestKey = `${key}:${updated.evaluatedAt || Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
+    this.pendingEvaluationPromises.set(requestKey, requestPromise);
+    requestPromise.finally(() => this.pendingEvaluationPromises.delete(requestKey)).catch(() => {});
+    return requestPromise;
   }
 
   public submitBatch(
@@ -1669,10 +1712,13 @@ class IronStorage {
   }> {
     // Flush all in-flight decisions for this batch before the server freezes it.
     // A failed save rejects this wait and prevents an incomplete submission.
-    const pendingWrites = Array.from(this.pendingEvaluationPromises.entries())
-      .filter(([key]) => key.startsWith(`${batchId}:`))
-      .map(([, promise]) => promise);
-    if (pendingWrites.length) await Promise.all(pendingWrites);
+    while (true) {
+      const pendingWrites = Array.from(this.pendingEvaluationPromises.entries())
+        .filter(([key]) => key.startsWith(`${batchId}:`))
+        .map(([, promise]) => promise);
+      if (pendingWrites.length === 0) break;
+      await Promise.all(pendingWrites);
+    }
 
     // The backend is authoritative: do not mutate local results or show success until it confirms.
     const backendRes = await api.evaluations.submitBatch(batchId);
