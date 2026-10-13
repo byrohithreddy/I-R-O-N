@@ -207,8 +207,11 @@ class IronStorage {
               continue;
             }
             const remote = remoteByKey.get(key);
+            const priorOutcome = (data.roundResults || []).find((result: RoundResult) =>
+              result.batchId === value.evaluation.batchId && result.studentId === value.evaluation.studentId
+            );
             const serverConfirmed = value.evaluation.action === 'NONE'
-              ? !remote
+              ? !remote && (!priorOutcome || priorOutcome.result === 'REJECTED')
               : remote?.action === value.evaluation.action;
             if (serverConfirmed) {
               this.pendingEvaluationWrites.delete(key);
