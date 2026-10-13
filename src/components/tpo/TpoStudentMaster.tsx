@@ -3,6 +3,7 @@ import { Student } from '../../types';
 import { ironStorage } from '../../services/storage';
 import { api } from '../../services/api';
 import { parseCsvRows, escapeCsvField } from '../../utils/csv';
+import { getIstCalendarDate } from '../../utils/date';
 import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import {
@@ -216,7 +217,7 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `IRON_Student_Master_DB_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `IRON_Student_Master_DB_${getIstCalendarDate()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
