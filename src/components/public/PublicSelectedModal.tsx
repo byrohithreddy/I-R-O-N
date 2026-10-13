@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Modal } from '../common/Modal';
 import { Drive, Placement, Student } from '../../types';
 import { ironStorage } from '../../services/storage';
+import { formatIstTimestamp } from '../../utils/date';
 import { Download, Search } from 'lucide-react';
 
 interface PublicSelectedModalProps {
@@ -47,7 +48,7 @@ export const PublicSelectedModal: React.FC<PublicSelectedModalProps> = ({
   const handleExportCSV = () => {
     const headers = ['Roll Number,Student Name,Department,Branch,Package,Date'];
     const lines = rows.map(
-      (r) => `"${r.rollNumber}","${r.name}","${r.department}","${r.branch}","${r.package}","${r.selectedAt}"`
+      (r) => `"${r.rollNumber}","${r.name}","${r.department}","${r.branch}","${r.package}","${formatIstTimestamp(r.selectedAt, { dateStyle: 'medium' })}"`
     );
     const content = [headers, ...lines].join('\n');
     const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
