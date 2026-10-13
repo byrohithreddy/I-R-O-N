@@ -238,6 +238,16 @@ export const api = {
 
   // Evaluations
   evaluations: {
+    async evaluateBulk(payload: {
+      batchId: string;
+      decisions: Array<{ studentId: string; action: 'SELECT' | 'HOLD' | 'NONE' }>;
+    }): Promise<{ success: boolean; savedCount: number }> {
+      return request('/evaluations/bulk', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    },
+
     async getByBatch(batchId: string): Promise<any[]> {
       return request(`/evaluations/batch/${batchId}`);
     },
