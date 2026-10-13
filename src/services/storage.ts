@@ -60,6 +60,7 @@ class IronStorage {
   private syncListeners: Set<() => void> = new Set();
   private lastSyncFingerprint = '';
   private pendingEvaluationWrites = new Map<string, { evaluation: Evaluation; timestamp: number }>();
+  private pendingEvaluationPromises = new Map<string, Promise<any>>();
   private memoryCache: Map<string, any> = new Map();
   private studentsCache: Student[] = [];
 
@@ -1344,7 +1345,7 @@ class IronStorage {
         batchId,
         roundId: batch.roundId,
         studentId,
-        action: action === 'NONE' ? 'REJECT' : action,
+        action,
       }).catch((e) => console.warn('Backend evaluate warning:', e));
     }
 
@@ -1375,26 +1376,36 @@ class IronStorage {
     const updated = this.saveEvaluation(batchId, batchStudentId, studentId, action, allowSubmittedEdit, false);
     this.pendingEvaluationWrites.set(key, { evaluation: updated, timestamp: Date.now() });
 
+    const requestKey = `${key}:${updated.evaluatedAt || Date.now()}`;
+    const writePromise = api.evaluations.evaluate({
+      batchId,
+      roundId: batch.roundId,
+      studentId,
+      action,
+    });
+    this.pendingEvaluationPromises.set(requestKey, writePromise);
+
     try {
-      await api.evaluations.evaluate({
-        batchId,
-        roundId: batch.roundId,
-        studentId,
-        action,
-      });
-      this.pendingEvaluationWrites.delete(key);
+      await writePromise;
+      if (this.pendingEvaluationWrites.get(key)?.evaluation.evaluatedAt === updated.evaluatedAt) {
+        this.pendingEvaluationWrites.delete(key);
+      }
     } catch (err: any) {
-      // Roll back only this student's decision, never the entire evaluations array.
+      // Roll back only this student's decision, and only if no newer click replaced it.
       const current = this.getEvaluations();
       const index = current.findIndex((e) => e.batchId === batchId && e.studentId === studentId);
-      if (index >= 0) {
+      if (index >= 0 && current[index].evaluatedAt === updated.evaluatedAt) {
         if (previous) current[index] = previous;
         else current.splice(index, 1);
         this.set(STORAGE_KEYS.EVALUATIONS, current);
+        this.notifyListeners();
       }
-      this.pendingEvaluationWrites.delete(key);
-      this.notifyListeners();
+      if (this.pendingEvaluationWrites.get(key)?.evaluation.evaluatedAt === updated.evaluatedAt) {
+        this.pendingEvaluationWrites.delete(key);
+      }
       throw new Error(`Server rejection: ${err.message || err}`);
+    } finally {
+      this.pendingEvaluationPromises.delete(requestKey);
     }
 
     return updated;
@@ -1656,13 +1667,12 @@ class IronStorage {
     rejectedCount: number;
     placedCount: number;
   }> {
-    // Wait for every in-flight decision in this batch before the server freezes it.
-    // A rejected save aborts submission instead of freezing an incomplete evaluation set.
-    const pendingWrites = Array.from(this.pendingEvaluationWrites.entries())
-      .filter(([key]) => key.startsWith(`${batchId}:`));
-    if (pendingWrites.length) {
-      throw new Error('Evaluation saves are still pending. Please wait and submit again.');
-    }
+    // Flush all in-flight decisions for this batch before the server freezes it.
+    // A failed save rejects this wait and prevents an incomplete submission.
+    const pendingWrites = Array.from(this.pendingEvaluationPromises.entries())
+      .filter(([key]) => key.startsWith(`${batchId}:`))
+      .map(([, promise]) => promise);
+    if (pendingWrites.length) await Promise.all(pendingWrites);
 
     // The backend is authoritative: do not mutate local results or show success until it confirms.
     const backendRes = await api.evaluations.submitBatch(batchId);
