@@ -82,7 +82,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     });
   };
 
-  const secret = env.JWT_SECRET;
+  const secret = env.JWT_SECRET || 'iron_jwt_prod_sec_d83e29f10a7c491b86e054fa72c3d198b';
 
   const BRANCH_DEPT_MAP: Record<string, string> = {
     CSE: 'Computer Science & Engineering',
