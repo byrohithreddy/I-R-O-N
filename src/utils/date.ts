@@ -52,15 +52,50 @@ export function addCalendarMonths(dateString: string, months: number): string {
   return `${targetYear.toString().padStart(4, '0')}-${(targetMonth + 1).toString().padStart(2, '0')}-${targetDay.toString().padStart(2, '0')}`;
 }
 
+/** Return the number of calendar days from one YYYY-MM-DD date to another. */
+export function getCalendarDayDifference(fromDate: string, toDate: string): number {
+  const parse = (value: string) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim().split('T')[0]);
+    if (!match) throw new Error('Calendar dates must use YYYY-MM-DD format.');
+    const [year, month, day] = match.slice(1).map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+      throw new Error('Invalid calendar date.');
+    }
+    return Date.UTC(year, month - 1, day);
+  };
+  return (parse(toDate) - parse(fromDate)) / (24 * 60 * 60 * 1000);
+}
+
+/** Add calendar days without relying on the host machine's timezone. */
+export function addCalendarDays(dateString: string, days: number): string {
+  if (!Number.isInteger(days)) throw new Error('A whole-number day offset is required.');
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateString.trim().split('T')[0]);
+  if (!match) throw new Error('A valid YYYY-MM-DD date is required.');
+  const [year, month, day] = match.slice(1).map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return date.getUTCFullYear().toString().padStart(4, '0') + '-' +
+    (date.getUTCMonth() + 1).toString().padStart(2, '0') + '-' +
+    date.getUTCDate().toString().padStart(2, '0');
+}
+
 /** Format a real event timestamp explicitly as India local time. */
 export function formatIstTimestamp(
   timestamp: string | Date | null | undefined,
-  options: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeStyle: 'short' }
+  options?: Intl.DateTimeFormatOptions
 ): string {
   if (!timestamp) return 'N/A';
-  const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+  // SQLite datetime('now') values are UTC but omit the timezone marker.
+  // Normalize those values to ISO UTC before formatting them in India time.
+  const normalizedTimestamp = typeof timestamp === 'string'
+    ? timestamp.replace(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2}(?:\.\d+)?)$/, '$1T$2Z')
+    : timestamp;
+  const date = normalizedTimestamp instanceof Date ? normalizedTimestamp : new Date(normalizedTimestamp);
   if (Number.isNaN(date.getTime())) return 'N/A';
-  return new Intl.DateTimeFormat('en-IN', { ...options, timeZone: 'Asia/Kolkata' }).format(date);
+  return new Intl.DateTimeFormat('en-IN', {
+    ...(options || { dateStyle: 'medium', timeStyle: 'short' }),
+    timeZone: 'Asia/Kolkata',
+  }).format(date);
 }
 
 /**
