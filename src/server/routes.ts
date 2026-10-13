@@ -221,27 +221,12 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
     const isTpo = currentUser?.role === 'TPO';
     const isStaff = Boolean(currentUser && ['TPO', 'COORDINATOR', 'HR'].includes(currentUser.role));
 
-    // Fast version probe for ETag calculation (M1 optimization)
-    const probeQuery = isStaff
-      ? `SELECT 
-           (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '') FROM drives) as d_v,
-           (SELECT COUNT(*) FROM rounds) as r_v,
-           (SELECT COUNT(*) FROM placements) as p_v,
-           (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '') FROM students) as s_v,
-           (SELECT COUNT(*) FROM applications) as a_v,
-           (SELECT COUNT(*) FROM round_candidates) as c_v,
-           (SELECT COUNT(*) || ':' || COALESCE(MAX(submitted_at), '') FROM batches) as b_v,
-           (SELECT COUNT(*) FROM batch_students) as bs_v,
-           (SELECT COUNT(*) FROM evaluations) as e_v,
-           (SELECT COUNT(*) FROM round_results) as rr_v`
-      : `SELECT 
-           (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '') FROM drives WHERE status != 'DRAFT') as d_v,
-           (SELECT COUNT(*) FROM rounds) as r_v,
-           (SELECT COUNT(*) FROM placements) as p_v`;
-
-    const probe = await db.prepare(probeQuery).first<any>();
-    const probeStr = probe ? Object.values(probe).join('|') : '';
-    const etag = `W/"sync_${isStaff ? 'staff' : 'pub'}_${isTpo ? 'tpo' : 'notpo'}_${probeStr}"`;
+    // The migration's triggers increment this revision for every sync-visible table mutation.
+    const probe = await db.prepare('SELECT revision FROM sync_revision WHERE id = 1').first<any>();
+    if (!probe) {
+      return res.status(500).json({ error: 'Sync revision is not initialized. Apply migration 0003_sync_revision.sql.' });
+    }
+    const etag = `W/"sync_${isStaff ? 'staff' : 'pub'}_${isTpo ? 'tpo' : 'notpo'}_${probe.revision}"`;
 
     const ifNoneMatch = req.headers['if-none-match'];
     if (ifNoneMatch && ifNoneMatch === etag) {
@@ -1982,6 +1967,15 @@ apiRouter.post('/batches/:id/submit', authMiddleware, roleMiddleware(['HR', 'TPO
 
       const resultId = `rr_${round?.id || 'rnd'}_${studentId}`;
       const outcome = action === 'SELECT' ? 'SELECTED' : action === 'HOLD' && !isFinal ? 'HOLD' : 'REJECTED';
+
+      // Persist application lifecycle state in the same atomic transaction as round results.
+      const applicationStatus = isFinal
+        ? (action === 'SELECT' ? 'PLACED' : 'REJECTED')
+        : (action === 'SELECT' || (action === 'HOLD' && !isFinal) ? 'ACTIVE' : 'REJECTED');
+      atomicBatchStatements.push(
+        db.prepare('UPDATE applications SET status = ? WHERE drive_id = ? AND student_id = ?')
+          .bind(applicationStatus, batch.drive_id, studentId)
+      );
 
       atomicBatchStatements.push(
         db.prepare(
