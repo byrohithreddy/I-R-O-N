@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Drive, DriveRound, Application, Student, RoundType } from '../../types';
 import { ironStorage } from '../../services/storage';
-import { calculateIstApplicationDeadline } from '../../utils/date';
+import { calculateIstApplicationDeadline, getIstCalendarDate } from '../../utils/date';
 import { StatusBadge } from '../common/StatusBadge';
 import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
@@ -87,7 +87,7 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
   const [backlogRule, setBacklogRule] = useState<number | string>(0);
   const [eligibleBranches, setEligibleBranches] = useState<string[]>(['CSE', 'CSE-DS', 'CSE AIML', 'CSIT', 'ECE']);
   const [eligibilityCriteria, setEligibilityCriteria] = useState('');
-  const [driveDate, setDriveDate] = useState('2026-11-05');
+  const [driveDate, setDriveDate] = useState(() => getIstCalendarDate());
   const [driveTime, setDriveTime] = useState('09:30');
   const [location, setLocation] = useState('Placement Auditorium');
   const [createRounds, setCreateRounds] = useState<CreateRoundItem[]>([
@@ -139,7 +139,7 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
     setBacklogRule(0);
     setEligibleBranches(['CSE', 'CSIT', 'ECE']);
     setEligibilityCriteria('Minimum 7.0 CGPA with no standing backlogs.');
-    setDriveDate('2026-11-05');
+    setDriveDate(getIstCalendarDate());
     setDriveTime('09:30');
     setLocation('Campus Placement Block');
     setCreateRounds([
