@@ -102,7 +102,7 @@ export interface RoundCandidate {
 }
 
 export type BatchCapacityType = 'LIMITED' | 'UNLIMITED';
-export type BatchStatus = 'OPEN' | 'SUBMITTED';
+export type BatchStatus = 'OPEN' | 'SUBMITTED' | 'DRAFT' | 'ACTIVE';
 
 export interface Batch {
   id: string;
@@ -128,7 +128,7 @@ export interface BatchStudent {
   addedAt: string;
 }
 
-export type EvaluationAction = 'SELECT' | 'HOLD' | 'NONE';
+export type EvaluationAction = 'SELECT' | 'HOLD' | 'NONE' | 'REJECT';
 
 export interface Evaluation {
   id: string;
@@ -152,6 +152,7 @@ export interface RoundResult {
   result: RoundResultType;
   notes?: string;
   finalizedBy?: string;
+  finalizedAt?: string;
   createdAt: string;
 }
 

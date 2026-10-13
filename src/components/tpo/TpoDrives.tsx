@@ -1374,10 +1374,14 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
                       {!rnd.isFinalRound && ironStorage.getRounds(roundsDrive.id).length > 1 && (
                         <button
                           type="button"
-                          onClick={() => {
+                          onClick={async () => {
                             if (window.confirm(`Delete ${rnd.roundName}?`)) {
-                              ironStorage.deleteRound(rnd.id);
-                              onRefresh();
+                              try {
+                                await ironStorage.deleteRoundAsync(rnd.id);
+                                onRefresh();
+                              } catch (err: any) {
+                                alert(err.message || 'Error deleting round.');
+                              }
                             }
                           }}
                           className="p-1 text-zinc-400 hover:text-rose-600 rounded hover:bg-zinc-100"
@@ -1452,31 +1456,35 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
                 <button
                   type="button"
                   disabled={!newRoundName.trim()}
-                  onClick={() => {
+                  onClick={async () => {
                     const currentRounds = ironStorage.getRounds(roundsDrive.id);
-                    if (newRoundIsFinal) {
-                      // Demote previous final rounds
-                      currentRounds.forEach((cr) => {
-                        if (cr.isFinalRound) {
-                          ironStorage.saveRound({ isFinalRound: false }, cr.id);
+                    try {
+                      if (newRoundIsFinal) {
+                        // Demote previous final rounds
+                        for (const cr of currentRounds) {
+                          if (cr.isFinalRound) {
+                            await ironStorage.saveRoundAsync({ isFinalRound: false }, cr.id);
+                          }
                         }
+                      }
+
+                      await ironStorage.saveRoundAsync({
+                        driveId: roundsDrive.id,
+                        roundNumber: currentRounds.length + 1,
+                        roundName: newRoundName.trim(),
+                        roundType: newRoundType,
+                        description: newRoundDesc.trim(),
+                        status: 'UPCOMING',
+                        isFinalRound: newRoundIsFinal,
                       });
+
+                      setNewRoundName('');
+                      setNewRoundDesc('');
+                      setNewRoundIsFinal(false);
+                      onRefresh();
+                    } catch (err: any) {
+                      alert(err.message || 'Error saving round.');
                     }
-
-                    ironStorage.saveRound({
-                      driveId: roundsDrive.id,
-                      roundNumber: currentRounds.length + 1,
-                      roundName: newRoundName.trim(),
-                      roundType: newRoundType,
-                      description: newRoundDesc.trim(),
-                      status: 'UPCOMING',
-                      isFinalRound: newRoundIsFinal,
-                    });
-
-                    setNewRoundName('');
-                    setNewRoundDesc('');
-                    setNewRoundIsFinal(false);
-                    onRefresh();
                   }}
                   className="px-4 py-1.5 text-xs font-semibold text-white bg-zinc-950 hover:bg-zinc-800 disabled:bg-zinc-300 rounded transition-colors"
                 >

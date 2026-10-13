@@ -3,7 +3,7 @@ import { Modal } from '../common/Modal';
 import { Drive, Student } from '../../types';
 import { ironStorage } from '../../services/storage';
 import { api } from '../../services/api';
-import { CheckCircle2, XCircle, Search, AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
+import { CheckCircle2, XCircle, Search, AlertCircle, ArrowRight, Loader2, AlertTriangle } from 'lucide-react';
 
 interface StudentApplyModalProps {
   isOpen: boolean;
@@ -26,6 +26,7 @@ export const StudentApplyModal: React.FC<StudentApplyModalProps> = ({
   const [isVerifying, setIsVerifying] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedAppId, setSubmittedAppId] = useState<string | null>(null);
+  const [submittedEligibilityStatus, setSubmittedEligibilityStatus] = useState<'ELIGIBLE' | 'NOT_ELIGIBLE'>('ELIGIBLE');
   const [eligibilityResult, setEligibilityResult] = useState<{ isEligible: boolean; reasons: string[] } | null>(null);
   const [alreadyApplied, setAlreadyApplied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +42,7 @@ export const StudentApplyModal: React.FC<StudentApplyModalProps> = ({
       setIsVerifying(false);
       setIsSubmitting(false);
       setSubmittedAppId(null);
+      setSubmittedEligibilityStatus('ELIGIBLE');
       setEligibilityResult(null);
       setAlreadyApplied(false);
       setError(null);
@@ -111,15 +113,11 @@ export const StudentApplyModal: React.FC<StudentApplyModalProps> = ({
       return;
     }
 
-    if (!eligibilityResult.isEligible) {
-      setError(`Cannot apply: ${eligibilityResult.reasons.join('. ')}`);
-      return;
-    }
-
     setIsSubmitting(true);
     try {
       const app = await ironStorage.applyToDriveAsync(drive.id, student.rollNumber, email, phone);
       setSubmittedAppId(app.id);
+      setSubmittedEligibilityStatus((app.eligibilityStatus as 'ELIGIBLE' | 'NOT_ELIGIBLE') || (eligibilityResult.isEligible ? 'ELIGIBLE' : 'NOT_ELIGIBLE'));
       setIsSuccess(true);
       onApplicationSubmitted();
     } catch (err: any) {
@@ -139,14 +137,35 @@ export const StudentApplyModal: React.FC<StudentApplyModalProps> = ({
     >
       {isSuccess ? (
         <div className="py-6 text-center space-y-4">
-          <div className="w-12 h-12 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-600 mx-auto flex items-center justify-center">
-            <CheckCircle2 className="w-6 h-6" />
+          <div className={`w-12 h-12 rounded-full border mx-auto flex items-center justify-center ${
+            submittedEligibilityStatus === 'ELIGIBLE'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
+              : 'bg-amber-50 border-amber-200 text-amber-600'
+          }`}>
+            {submittedEligibilityStatus === 'ELIGIBLE' ? (
+              <CheckCircle2 className="w-6 h-6" />
+            ) : (
+              <AlertTriangle className="w-6 h-6" />
+            )}
           </div>
           <div>
-            <h3 className="text-base font-semibold text-zinc-950">Application Submitted Successfully</h3>
+            <h3 className="text-base font-semibold text-zinc-950">
+              {submittedEligibilityStatus === 'ELIGIBLE'
+                ? 'Application Submitted Successfully'
+                : 'Application Recorded for TPO Review'}
+            </h3>
             <p className="text-xs text-zinc-600 mt-1 max-w-md mx-auto">
-              Your application for <span className="font-semibold text-zinc-900">{drive.companyName}</span> has been
-              authoritatively recorded in IRON. You have been added to the Round 1 candidate pool.
+              {submittedEligibilityStatus === 'ELIGIBLE' ? (
+                <>
+                  Your application for <span className="font-semibold text-zinc-900">{drive.companyName}</span> has been
+                  authoritatively recorded in IRON. You have been added to the Round 1 candidate pool.
+                </>
+              ) : (
+                <>
+                  Your application for <span className="font-semibold text-zinc-900">{drive.companyName}</span> has been
+                  recorded with status <span className="font-bold text-amber-700">NOT ELIGIBLE</span> based on criteria. It has been routed to the TPO office and can be considered for candidate pool admission through TPO administrative override.
+                </>
+              )}
             </p>
             {submittedAppId && (
               <div className="mt-3 inline-block px-3 py-1 bg-zinc-100 border border-zinc-200 rounded text-[11px] font-mono text-zinc-800">
@@ -279,7 +298,7 @@ export const StudentApplyModal: React.FC<StudentApplyModalProps> = ({
                   )}
                   <div>
                     <div className="font-semibold">
-                      {eligibilityResult.isEligible ? 'Criteria Met: Eligible to Apply' : 'Not Eligible'}
+                      {eligibilityResult.isEligible ? 'Criteria Met: Eligible to Apply' : 'Criteria Not Met (TPO Review Available)'}
                     </div>
                     {eligibilityResult.reasons.length > 0 && (
                       <ul className="list-disc list-inside mt-1 text-[11px] space-y-0.5 opacity-90">
@@ -287,6 +306,11 @@ export const StudentApplyModal: React.FC<StudentApplyModalProps> = ({
                           <li key={i}>{r}</li>
                         ))}
                       </ul>
+                    )}
+                    {!eligibilityResult.isEligible && (
+                      <p className="mt-2 text-[11px] text-rose-800 font-medium">
+                        You can still submit your application. It will be recorded as Ineligible and queued for the TPO office to review and evaluate for administrative override.
+                      </p>
                     )}
                   </div>
                 </div>
@@ -341,8 +365,12 @@ export const StudentApplyModal: React.FC<StudentApplyModalProps> = ({
                   </button>
                   <button
                     type="submit"
-                    disabled={!eligibilityResult?.isEligible || alreadyApplied || isSubmitting}
-                    className="px-5 py-2 text-xs font-medium text-white bg-zinc-950 hover:bg-zinc-800 disabled:bg-zinc-300 disabled:cursor-not-allowed rounded transition-colors flex items-center gap-1.5"
+                    disabled={alreadyApplied || isSubmitting}
+                    className={`px-5 py-2 text-xs font-medium text-white disabled:bg-zinc-300 disabled:cursor-not-allowed rounded transition-colors flex items-center gap-1.5 ${
+                      !eligibilityResult?.isEligible
+                        ? 'bg-amber-600 hover:bg-amber-700'
+                        : 'bg-zinc-950 hover:bg-zinc-800'
+                    }`}
                   >
                     {isSubmitting ? (
                       <>
@@ -351,7 +379,7 @@ export const StudentApplyModal: React.FC<StudentApplyModalProps> = ({
                       </>
                     ) : (
                       <>
-                        <span>Submit Application</span>
+                        <span>{eligibilityResult?.isEligible ? 'Submit Application' : 'Submit for TPO Review'}</span>
                         <ArrowRight className="w-3.5 h-3.5" />
                       </>
                     )}

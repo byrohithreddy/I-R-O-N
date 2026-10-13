@@ -59,30 +59,8 @@ async function hashPassword(password: string, salt: string): Promise<string> {
   return Array.from(new Uint8Array(derivedBits)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function ensureStudentMasterSchema(db: D1Database): Promise<void> {
-  const { results } = await db.prepare('PRAGMA table_info(students)').all<any>();
-  const columns = new Set(results.map((r: any) => r.name));
-  const additions: Array<[string, string]> = [
-    ['college', "TEXT NOT NULL DEFAULT ''"],
-    ['department', "TEXT NOT NULL DEFAULT ''"],
-    ['academic_year', "TEXT NOT NULL DEFAULT '2023-2027'"],
-  ];
-
-  for (const [name, definition] of additions) {
-    if (!columns.has(name)) {
-      await db.prepare(`ALTER TABLE students ADD COLUMN ${name} ${definition}`).run();
-    }
-  }
-}
-
 export const onRequest: PagesFunction<Env> = async (context) => {
   const { request, env } = context;
-
-  try {
-    await ensureStudentMasterSchema(env.DB);
-  } catch (error) {
-    console.error('Student schema initialization failed:', error);
-  }
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
@@ -104,7 +82,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     });
   };
 
-  const secret = env.JWT_SECRET || 'iron_campus_recruitment_jwt_secret_key_2026';
+  const secret = env.JWT_SECRET;
 
   const BRANCH_DEPT_MAP: Record<string, string> = {
     CSE: 'Computer Science & Engineering',
@@ -134,6 +112,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
   // Real Web Crypto HMAC-SHA256 JWT Signature Verification
   const getAuthUser = async (): Promise<any | null> => {
+    if (!secret) return null;
     const authHeader = request.headers.get('Authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
     const token = authHeader.substring(7);
@@ -170,6 +149,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   };
 
   const requireAuth = async (allowedRoles?: string[], targetDriveId?: string): Promise<{ user: any; error?: Response }> => {
+    if (!secret) {
+      return { user: null, error: jsonResponse({ error: 'Server authentication configuration error: JWT_SECRET is not configured' }, 500) };
+    }
     const user = await getAuthUser();
     if (!user) {
       return { user: null, error: jsonResponse({ error: 'Unauthorized: Authentication token is missing or invalid' }, 401) };
@@ -189,11 +171,41 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       return jsonResponse({ status: 'ok', platform: 'cloudflare-pages-d1', timestamp: new Date().toISOString() });
     }
 
-    // 0. Unified Real-Time Single-Request Sync: GET /api/sync (Public Visitors & Authenticated Users)
+    // 0. Unified Real-Time Single-Request Sync: GET /api/sync (Public Visitors & Authenticated Users with ETag / 304)
     if (path === '/api/sync' && method === 'GET') {
       const currentUser = await getAuthUser();
       const isTpo = currentUser?.role === 'TPO';
       const isStaff = Boolean(currentUser && ['TPO', 'COORDINATOR', 'HR'].includes(currentUser.role));
+
+      // Fast version probe for ETag calculation (M1 optimization)
+      const probeQuery = isStaff
+        ? `SELECT 
+             (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '') FROM drives) as d_v,
+             (SELECT COUNT(*) FROM rounds) as r_v,
+             (SELECT COUNT(*) FROM placements) as p_v,
+             (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '') FROM students) as s_v,
+             (SELECT COUNT(*) FROM applications) as a_v,
+             (SELECT COUNT(*) FROM round_candidates) as c_v,
+             (SELECT COUNT(*) || ':' || COALESCE(MAX(submitted_at), '') FROM batches) as b_v,
+             (SELECT COUNT(*) FROM batch_students) as bs_v,
+             (SELECT COUNT(*) FROM evaluations) as e_v,
+             (SELECT COUNT(*) FROM round_results) as rr_v`
+        : `SELECT 
+             (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '') FROM drives WHERE status != 'DRAFT') as d_v,
+             (SELECT COUNT(*) FROM rounds) as r_v,
+             (SELECT COUNT(*) FROM placements) as p_v`;
+
+      const probe = await env.DB.prepare(probeQuery).first<any>();
+      const probeStr = probe ? Object.values(probe).join('|') : '';
+      const etag = `W/"sync_${isStaff ? 'staff' : 'pub'}_${isTpo ? 'tpo' : 'notpo'}_${probeStr}"`;
+
+      const ifNoneMatch = request.headers.get('If-None-Match');
+      if (ifNoneMatch && ifNoneMatch === etag) {
+        return new Response(null, {
+          status: 304,
+          headers: { ...corsHeaders, ETag: etag, 'Cache-Control': 'private, no-cache' },
+        });
+      }
 
       const [
         studentsRes,
@@ -216,15 +228,15 @@ export const onRequest: PagesFunction<Env> = async (context) => {
                FROM drives d 
                LEFT JOIN drive_credentials c ON d.id = c.drive_id 
                ORDER BY d.drive_date DESC`
-            : `SELECT * FROM drives ORDER BY drive_date DESC`
+            : `SELECT * FROM drives WHERE status != 'DRAFT' ORDER BY drive_date DESC`
         ).all(),
         env.DB.prepare('SELECT * FROM rounds ORDER BY round_number ASC').all(),
-        env.DB.prepare('SELECT * FROM applications ORDER BY applied_at DESC').all(),
-        env.DB.prepare('SELECT * FROM round_candidates').all(),
-        env.DB.prepare('SELECT * FROM batches ORDER BY created_at ASC').all(),
-        env.DB.prepare('SELECT * FROM batch_students').all(),
-        env.DB.prepare('SELECT * FROM evaluations').all(),
-        env.DB.prepare('SELECT * FROM round_results').all(),
+        isStaff ? env.DB.prepare('SELECT * FROM applications ORDER BY applied_at DESC').all() : Promise.resolve({ results: [] }),
+        isStaff ? env.DB.prepare('SELECT * FROM round_candidates').all() : Promise.resolve({ results: [] }),
+        isStaff ? env.DB.prepare('SELECT * FROM batches ORDER BY created_at ASC').all() : Promise.resolve({ results: [] }),
+        isStaff ? env.DB.prepare('SELECT * FROM batch_students').all() : Promise.resolve({ results: [] }),
+        isStaff ? env.DB.prepare('SELECT * FROM evaluations').all() : Promise.resolve({ results: [] }),
+        isStaff ? env.DB.prepare('SELECT * FROM round_results').all() : Promise.resolve({ results: [] }),
         env.DB.prepare('SELECT * FROM placements ORDER BY placed_at DESC').all(),
       ]);
 
@@ -300,7 +312,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           isFinalRound: Boolean(r.is_final_round),
           createdAt: r.created_at,
         })),
-        applications: (appsRes.results || []).map((a: any) => ({
+        applications: isStaff ? (appsRes.results || []).map((a: any) => ({
           id: a.id,
           driveId: a.drive_id,
           studentId: a.student_id,
@@ -313,8 +325,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           overrideAt: a.override_at,
           appliedAt: a.applied_at,
           status: a.status || 'APPLIED',
-        })),
-        candidates: (candsRes.results || []).map((c: any) => ({
+        })) : [],
+        candidates: isStaff ? (candsRes.results || []).map((c: any) => ({
           id: c.id,
           driveId: c.drive_id,
           roundId: c.round_id,
@@ -323,8 +335,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           entryStatus: c.entry_status,
           sourceRoundId: c.source_round_id,
           createdAt: c.created_at,
-        })),
-        batches: (batchesRes.results || []).map((b: any) => ({
+        })) : [],
+        batches: isStaff ? (batchesRes.results || []).map((b: any) => ({
           id: b.id,
           roundId: b.round_id,
           driveId: b.drive_id,
@@ -336,16 +348,16 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           createdAt: b.created_at,
           submittedAt: b.submitted_at,
           submittedBy: b.submitted_by,
-        })),
-        batchStudents: (batchStudentsRes.results || []).map((bs: any) => ({
+        })) : [],
+        batchStudents: isStaff ? (batchStudentsRes.results || []).map((bs: any) => ({
           id: bs.id,
           batchId: bs.batch_id,
           roundId: bs.round_id,
           driveId: bs.drive_id,
           studentId: bs.student_id,
           assignedAt: bs.assigned_at,
-        })),
-        evaluations: (evalsRes.results || []).map((e: any) => ({
+        })) : [],
+        evaluations: isStaff ? (evalsRes.results || []).map((e: any) => ({
           id: e.id,
           batchId: e.batch_id,
           roundId: e.round_id,
@@ -354,8 +366,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           notes: e.notes,
           evaluatedAt: e.evaluated_at,
           evaluatedBy: e.evaluated_by,
-        })),
-        roundResults: (roundResultsRes.results || []).map((rr: any) => ({
+        })) : [],
+        roundResults: isStaff ? (roundResultsRes.results || []).map((rr: any) => ({
           id: rr.id,
           roundId: rr.round_id,
           driveId: rr.drive_id,
@@ -364,8 +376,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           result: rr.result,
           notes: rr.notes,
           finalizedAt: rr.finalized_at,
+          createdAt: rr.finalized_at || rr.created_at || new Date().toISOString(),
           finalizedBy: rr.finalized_by,
-        })),
+        })) : [],
         placements: (placementsRes.results || []).map((p: any) => ({
           id: p.id,
           driveId: p.drive_id,
@@ -381,11 +394,14 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           sourceRoundId: p.source_round_id,
           finalRoundId: p.source_round_id,
         })),
-      });
+      }, 200, { ETag: etag, 'Cache-Control': 'private, no-cache' });
     }
 
     // 1. Auth: /api/auth/login
     if (path === '/api/auth/login' && method === 'POST') {
+      if (!secret) {
+        return jsonResponse({ error: 'Server authentication configuration error: JWT_SECRET is not configured' }, 500);
+      }
       const body = (await request.json()) as any;
       const { username, password } = body;
       const cleanUsername = String(username || '').trim();
@@ -515,7 +531,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
              FROM drives d 
              LEFT JOIN drive_credentials c ON d.id = c.drive_id 
              ORDER BY d.drive_date DESC`
-          : `SELECT * FROM drives ORDER BY drive_date DESC`
+          : `SELECT * FROM drives WHERE status != 'DRAFT' ORDER BY drive_date DESC`
       ).all();
 
       const mapped = results.map((d: any) => {
@@ -713,6 +729,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     if (driveMatch && method === 'GET') {
       const d = await env.DB.prepare('SELECT * FROM drives WHERE id = ?').bind(driveMatch[1]).first<any>();
       if (!d) return jsonResponse({ error: 'Drive not found' }, 404);
+      if (d.status === 'DRAFT') {
+        const authUser = await getAuthUser();
+        if (authUser?.role !== 'TPO') {
+          return jsonResponse({ error: 'Drive not found' }, 404);
+        }
+      }
       return jsonResponse({
         id: d.id,
         companyName: d.company_name,
@@ -813,23 +835,27 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       });
     }
 
-    // Purge Drive: DELETE /api/drives/:id/purge
+    // Purge Drive: DELETE /api/drives/:id/purge (M4: Atomic & clean wipe of all drive-scoped records)
     const purgeMatch = path.match(/^\/api\/drives\/([a-zA-Z0-9_-]+)\/purge$/);
     if (purgeMatch && method === 'DELETE') {
       const auth = await requireAuth(['TPO']);
       if (auth.error) return auth.error;
 
       const driveId = purgeMatch[1];
-      await env.DB.prepare('DELETE FROM evaluations WHERE round_id IN (SELECT id FROM rounds WHERE drive_id = ?)').bind(driveId).run();
-      await env.DB.prepare('DELETE FROM round_results WHERE drive_id = ?').bind(driveId).run();
-      await env.DB.prepare('DELETE FROM batch_students WHERE drive_id = ?').bind(driveId).run();
-      await env.DB.prepare('DELETE FROM batches WHERE drive_id = ?').bind(driveId).run();
-      await env.DB.prepare('DELETE FROM round_candidates WHERE drive_id = ?').bind(driveId).run();
-      await env.DB.prepare('DELETE FROM applications WHERE drive_id = ?').bind(driveId).run();
-      await env.DB.prepare('DELETE FROM rounds WHERE drive_id = ?').bind(driveId).run();
-      await env.DB.prepare('DELETE FROM drive_credentials WHERE drive_id = ?').bind(driveId).run();
-      await env.DB.prepare('DELETE FROM users WHERE drive_id = ?').bind(driveId).run();
-      await env.DB.prepare('DELETE FROM drives WHERE id = ?').bind(driveId).run();
+      const purgeStatements = [
+        env.DB.prepare('DELETE FROM placements WHERE drive_id = ?').bind(driveId),
+        env.DB.prepare('DELETE FROM evaluations WHERE round_id IN (SELECT id FROM rounds WHERE drive_id = ?)').bind(driveId),
+        env.DB.prepare('DELETE FROM round_results WHERE drive_id = ?').bind(driveId),
+        env.DB.prepare('DELETE FROM batch_students WHERE drive_id = ?').bind(driveId),
+        env.DB.prepare('DELETE FROM batches WHERE drive_id = ?').bind(driveId),
+        env.DB.prepare('DELETE FROM round_candidates WHERE drive_id = ?').bind(driveId),
+        env.DB.prepare('DELETE FROM applications WHERE drive_id = ?').bind(driveId),
+        env.DB.prepare('DELETE FROM rounds WHERE drive_id = ?').bind(driveId),
+        env.DB.prepare('DELETE FROM drive_credentials WHERE drive_id = ?').bind(driveId),
+        env.DB.prepare('DELETE FROM users WHERE drive_id = ?').bind(driveId),
+        env.DB.prepare('DELETE FROM drives WHERE id = ?').bind(driveId),
+      ];
+      await env.DB.batch(purgeStatements);
       return jsonResponse({ success: true });
     }
 
@@ -1120,7 +1146,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
 
     if (path === '/api/rounds' && method === 'POST') {
+      const auth = await requireAuth(['TPO']);
+      if (auth.error) return auth.error;
       const r = (await request.json()) as any;
+      if (!r.driveId) return jsonResponse({ error: 'driveId is required' }, 400);
+
       const roundId = r.id || `rnd_${r.driveId}_${Date.now()}`;
       await env.DB.prepare(
         `INSERT OR REPLACE INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
@@ -1143,6 +1173,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
     const deleteRoundMatch = path.match(/^\/api\/rounds\/([a-zA-Z0-9_-]+)$/);
     if (deleteRoundMatch && method === 'DELETE') {
+      const auth = await requireAuth(['TPO']);
+      if (auth.error) return auth.error;
       const roundId = deleteRoundMatch[1];
       await env.DB.prepare('DELETE FROM rounds WHERE id = ?').bind(roundId).run();
       await env.DB.prepare('DELETE FROM batches WHERE round_id = ?').bind(roundId).run();
@@ -1153,7 +1185,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // 6. Applications: GET /api/applications/drive/:driveId
     const appsMatch = path.match(/^\/api\/applications\/drive\/([a-zA-Z0-9_-]+)$/);
     if (appsMatch && method === 'GET') {
-      const { results } = await env.DB.prepare('SELECT * FROM applications WHERE drive_id = ? ORDER BY applied_at DESC').bind(appsMatch[1]).all();
+      const driveId = appsMatch[1];
+      const auth = await requireAuth(['TPO', 'COORDINATOR', 'HR'], driveId);
+      if (auth.error) return auth.error;
+
+      const { results } = await env.DB.prepare('SELECT * FROM applications WHERE drive_id = ? ORDER BY applied_at DESC').bind(driveId).all();
       const mapped = results.map((a: any) => ({
         id: a.id,
         driveId: a.drive_id,
@@ -1294,12 +1330,18 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       }, 201);
     }
 
-    // Override application eligibility: POST /api/applications/:id/override
+    // Override application eligibility: POST /api/applications/:id/override (TPO Only)
     const overrideMatch = path.match(/^\/api\/applications\/([a-zA-Z0-9_-]+)\/override$/);
     if (overrideMatch && method === 'POST') {
-      const user = await getAuthUser();
+      const auth = await requireAuth(['TPO']);
+      if (auth.error) return auth.error;
+
       const appId = overrideMatch[1];
-      const { reason } = (await request.json()) as any;
+      const body = (await request.json().catch(() => ({}))) as any;
+      const reason = String(body?.reason || '').trim();
+      if (!reason) {
+        return jsonResponse({ error: 'Reason is required for TPO eligibility override' }, 400);
+      }
 
       const app = await env.DB.prepare('SELECT * FROM applications WHERE id = ?').bind(appId).first<any>();
       if (!app) return jsonResponse({ error: 'Application not found' }, 404);
@@ -1309,7 +1351,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
          SET eligibility_status = 'ELIGIBLE', eligibility_override = 1, override_reason = ?, override_by = ?, override_at = datetime('now')
          WHERE id = ?`
       )
-        .bind(reason || 'Approved by TPO Exception', user?.username || 'TPO', appId)
+        .bind(reason, auth.user.username || 'TPO', appId)
         .run();
 
       const round1 = await env.DB.prepare('SELECT id FROM rounds WHERE drive_id = ? AND round_number = 1').bind(app.drive_id).first<any>();
@@ -1328,7 +1370,17 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // 8. Candidates for a round: /api/rounds/:roundId/candidates
     const candMatch = path.match(/^\/api\/rounds\/([a-zA-Z0-9_-]+)\/candidates$/);
     if (candMatch && method === 'GET') {
-      const { results } = await env.DB.prepare('SELECT * FROM round_candidates WHERE round_id = ?').bind(candMatch[1]).all();
+      const auth = await requireAuth(['TPO', 'COORDINATOR', 'HR']);
+      if (auth.error) return auth.error;
+
+      const roundId = candMatch[1];
+      const round = await env.DB.prepare('SELECT drive_id FROM rounds WHERE id = ?').bind(roundId).first<any>();
+      if (!round) return jsonResponse({ error: 'Round not found' }, 404);
+      if (auth.user.role !== 'TPO' && auth.user.driveId && auth.user.driveId !== round.drive_id) {
+        return jsonResponse({ error: 'Forbidden: Cross-drive operations are prohibited' }, 403);
+      }
+
+      const { results } = await env.DB.prepare('SELECT * FROM round_candidates WHERE round_id = ?').bind(roundId).all();
       const mapped = results.map((rc: any) => ({
         id: rc.id,
         driveId: rc.drive_id,
@@ -1341,11 +1393,20 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       }));
       return jsonResponse(mapped);
     }
-
     // 9. Batches for a round: /api/batches/round/:roundId
     const batchesMatch = path.match(/^\/api\/batches\/round\/([a-zA-Z0-9_-]+)$/);
     if (batchesMatch && method === 'GET') {
-      const { results } = await env.DB.prepare('SELECT * FROM batches WHERE round_id = ? ORDER BY created_at ASC').bind(batchesMatch[1]).all();
+      const auth = await requireAuth(['TPO', 'COORDINATOR', 'HR']);
+      if (auth.error) return auth.error;
+
+      const roundId = batchesMatch[1];
+      const round = await env.DB.prepare('SELECT drive_id FROM rounds WHERE id = ?').bind(roundId).first<any>();
+      if (!round) return jsonResponse({ error: 'Round not found' }, 404);
+      if (auth.user.role !== 'TPO' && auth.user.driveId && auth.user.driveId !== round.drive_id) {
+        return jsonResponse({ error: 'Forbidden: Cross-drive operations are prohibited' }, 403);
+      }
+
+      const { results } = await env.DB.prepare('SELECT * FROM batches WHERE round_id = ? ORDER BY created_at ASC').bind(roundId).all();
       const mapped = results.map((b: any) => ({
         id: b.id,
         roundId: b.round_id,
@@ -1370,6 +1431,13 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const { roundId, driveId, batchName, capacityType, capacity, id } = (await request.json()) as any;
       if (!roundId || !batchName) return jsonResponse({ error: 'Round ID and Batch Name are required' }, 400);
 
+      const round = await env.DB.prepare('SELECT drive_id FROM rounds WHERE id = ?').bind(roundId).first<any>();
+      if (!round) return jsonResponse({ error: 'Round not found' }, 404);
+      if (auth.user.role !== 'TPO' && auth.user.driveId && auth.user.driveId !== round.drive_id) {
+        return jsonResponse({ error: 'Forbidden: Cross-drive operations are prohibited' }, 403);
+      }
+      const actualDriveId = round.drive_id || driveId;
+
       const batchId = id || `btch_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
       await env.DB.prepare(
         `INSERT INTO batches (id, round_id, drive_id, batch_name, capacity_type, capacity, status, created_by, created_at)
@@ -1378,7 +1446,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         .bind(
           batchId,
           roundId,
-          driveId || null,
+          actualDriveId,
           batchName,
           capacityType || 'LIMITED',
           capacityType === 'LIMITED' ? Number(capacity) || 30 : null,
@@ -1386,7 +1454,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         )
         .run();
 
-      return jsonResponse({ id: batchId, roundId, driveId, batchName, capacityType, capacity, status: 'OPEN' }, 201);
+      return jsonResponse({ id: batchId, roundId, driveId: actualDriveId, batchName, capacityType, capacity, status: 'OPEN' }, 201);
     }
 
     // Delete Batch: DELETE /api/batches/:id
@@ -1396,8 +1464,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       if (auth.error) return auth.error;
 
       const batchId = deleteBatchMatch[1];
-      const batch = await env.DB.prepare('SELECT status FROM batches WHERE id = ?').bind(batchId).first<any>();
+      const batch = await env.DB.prepare('SELECT drive_id, status FROM batches WHERE id = ?').bind(batchId).first<any>();
       if (!batch) return jsonResponse({ error: 'Batch not found' }, 404);
+      if (auth.user.role !== 'TPO' && auth.user.driveId && auth.user.driveId !== batch.drive_id) {
+        return jsonResponse({ error: 'Forbidden: Cross-drive operations are prohibited' }, 403);
+      }
       if (batch.status === 'SUBMITTED') {
         return jsonResponse({ error: 'Cannot delete a frozen/submitted batch' }, 403);
       }
@@ -1410,7 +1481,17 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // 10. Batch students: /api/batches/:id/students
     const bStudentsMatch = path.match(/^\/api\/batches\/([a-zA-Z0-9_-]+)\/students$/);
     if (bStudentsMatch && method === 'GET') {
-      const { results } = await env.DB.prepare('SELECT * FROM batch_students WHERE batch_id = ?').bind(bStudentsMatch[1]).all();
+      const auth = await requireAuth(['TPO', 'COORDINATOR', 'HR']);
+      if (auth.error) return auth.error;
+
+      const batchId = bStudentsMatch[1];
+      const batch = await env.DB.prepare('SELECT drive_id FROM batches WHERE id = ?').bind(batchId).first<any>();
+      if (!batch) return jsonResponse({ error: 'Batch not found' }, 404);
+      if (auth.user.role !== 'TPO' && auth.user.driveId && auth.user.driveId !== batch.drive_id) {
+        return jsonResponse({ error: 'Forbidden: Cross-drive operations are prohibited' }, 403);
+      }
+
+      const { results } = await env.DB.prepare('SELECT * FROM batch_students WHERE batch_id = ?').bind(batchId).all();
       const mapped = results.map((bs: any) => ({
         id: bs.id,
         batchId: bs.batch_id,
@@ -1422,33 +1503,62 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       return jsonResponse(mapped);
     }
 
-    // Assign Students to Batch: POST /api/batches/:id/assign
+    // Assign Students to Batch: POST /api/batches/:id/assign (Capacity Guard enforced)
     const assignMatch = path.match(/^\/api\/batches\/([a-zA-Z0-9_-]+)\/assign$/);
     if (assignMatch && method === 'POST') {
       const auth = await requireAuth(['COORDINATOR', 'TPO']);
       if (auth.error) return auth.error;
 
       const batchId = assignMatch[1];
-      const { studentIds } = (await request.json()) as any;
+      const body = (await request.json()) as any;
+      const studentIds = Array.isArray(body?.studentIds) ? body.studentIds : [];
+      if (studentIds.length === 0) {
+        return jsonResponse({ error: 'studentIds array is required' }, 400);
+      }
+
       const batch = await env.DB.prepare('SELECT * FROM batches WHERE id = ?').bind(batchId).first<any>();
       if (!batch) return jsonResponse({ error: 'Batch not found' }, 404);
+      if (auth.user.role !== 'TPO' && auth.user.driveId && auth.user.driveId !== batch.drive_id) {
+        return jsonResponse({ error: 'Forbidden: Cross-drive operations are prohibited' }, 403);
+      }
       if (batch.status === 'SUBMITTED') {
         return jsonResponse({ error: 'Cannot add candidates to a frozen/submitted batch' }, 403);
       }
 
-      let added = 0;
-      for (const sid of (studentIds || [])) {
-        try {
-          const bsId = `bs_${batchId}_${sid}`;
-          await env.DB.prepare(
-            `INSERT OR IGNORE INTO batch_students (id, batch_id, round_id, drive_id, student_id, assigned_at)
-             VALUES (?, ?, ?, ?, ?, datetime('now'))`
-          ).bind(bsId, batchId, batch.round_id, batch.drive_id, sid).run();
-          added++;
-        } catch {}
+      // Capacity Guard (Finding H6)
+      const currentCountRow = await env.DB.prepare('SELECT COUNT(*) as count FROM batch_students WHERE batch_id = ?').bind(batchId).first<any>();
+      const currentCount = currentCountRow ? Number(currentCountRow.count) : 0;
+      if (batch.capacity_type === 'LIMITED' && batch.capacity !== null) {
+        if (currentCount + studentIds.length > Number(batch.capacity)) {
+          return jsonResponse({
+            error: `Capacity exceeded! Batch limit is ${batch.capacity}. Currently assigned: ${currentCount}. Attempting to add: ${studentIds.length}.`
+          }, 400);
+        }
       }
 
-      return jsonResponse({ success: true, added });
+      // Pre-validate candidates already assigned in this round (Rule 15: UNIQUE(round_id, student_id))
+      const placeholders = studentIds.map(() => '?').join(',');
+      const existingRows = await env.DB
+        .prepare(`SELECT student_id FROM batch_students WHERE round_id = ? AND student_id IN (${placeholders})`)
+        .bind(batch.round_id, ...studentIds)
+        .all<any>();
+
+      const assignedSet = new Set((existingRows.results || []).map((r: any) => r.student_id));
+      const validStudentIds = studentIds.filter((id: string) => !assignedSet.has(id));
+
+      const assignStatements = validStudentIds.map((sid: string) =>
+        env.DB.prepare(
+          `INSERT INTO batch_students (id, batch_id, round_id, drive_id, student_id, assigned_at)
+           VALUES (?, ?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(round_id, student_id) DO NOTHING`
+        ).bind(`bs_${batchId}_${sid}`, batchId, batch.round_id, batch.drive_id, sid)
+      );
+
+      if (assignStatements.length > 0) {
+        await env.DB.batch(assignStatements);
+      }
+
+      return jsonResponse({ success: true, added: validStudentIds.length });
     }
 
     // Remove Student from Batch: POST /api/batches/:id/remove
@@ -1459,8 +1569,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       const batchId = removeMatch[1];
       const { studentId } = (await request.json()) as any;
-      const batch = await env.DB.prepare('SELECT * FROM batches WHERE id = ?').bind(batchId).first<any>();
+      const batch = await env.DB.prepare('SELECT drive_id, status FROM batches WHERE id = ?').bind(batchId).first<any>();
       if (!batch) return jsonResponse({ error: 'Batch not found' }, 404);
+      if (auth.user.role !== 'TPO' && auth.user.driveId && auth.user.driveId !== batch.drive_id) {
+        return jsonResponse({ error: 'Forbidden: Cross-drive operations are prohibited' }, 403);
+      }
       if (batch.status === 'SUBMITTED') {
         return jsonResponse({ error: 'Cannot remove candidates from a frozen/submitted batch' }, 403);
       }
@@ -1471,7 +1584,17 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // 11. Evaluations for batch: /api/evaluations/batch/:batchId
     const evalsMatch = path.match(/^\/api\/evaluations\/batch\/([a-zA-Z0-9_-]+)$/);
     if (evalsMatch && method === 'GET') {
-      const { results } = await env.DB.prepare('SELECT * FROM evaluations WHERE batch_id = ?').bind(evalsMatch[1]).all();
+      const auth = await requireAuth(['TPO', 'HR']);
+      if (auth.error) return auth.error;
+
+      const batchId = evalsMatch[1];
+      const batch = await env.DB.prepare('SELECT drive_id FROM batches WHERE id = ?').bind(batchId).first<any>();
+      if (!batch) return jsonResponse({ error: 'Batch not found' }, 404);
+      if (auth.user.role !== 'TPO' && auth.user.driveId && auth.user.driveId !== batch.drive_id) {
+        return jsonResponse({ error: 'Forbidden: Cross-drive operations are prohibited' }, 403);
+      }
+
+      const { results } = await env.DB.prepare('SELECT * FROM evaluations WHERE batch_id = ?').bind(batchId).all();
       const mapped = results.map((e: any) => ({
         id: e.id,
         batchId: e.batch_id,
@@ -1492,10 +1615,26 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const user = auth.user;
 
       const { batchId, roundId, studentId, action, notes } = (await request.json()) as any;
+      if (!batchId || !studentId) {
+        return jsonResponse({ error: 'batchId and studentId are required' }, 400);
+      }
+
       const batch = await env.DB.prepare('SELECT * FROM batches WHERE id = ?').bind(batchId).first<any>();
       if (!batch) return jsonResponse({ error: 'Batch not found' }, 404);
+      if (auth.user.role !== 'TPO' && auth.user.driveId && auth.user.driveId !== batch.drive_id) {
+        return jsonResponse({ error: 'Forbidden: Cross-drive operations are prohibited' }, 403);
+      }
+      if (roundId && batch.round_id !== roundId) {
+        return jsonResponse({ error: 'Mismatch between batch and round' }, 400);
+      }
 
-      const round = await env.DB.prepare('SELECT * FROM rounds WHERE id = ?').bind(roundId).first<any>();
+      const membership = await env.DB.prepare('SELECT id FROM batch_students WHERE batch_id = ? AND student_id = ?').bind(batchId, studentId).first<any>();
+      if (!membership) {
+        return jsonResponse({ error: 'Student is not assigned to this batch' }, 400);
+      }
+
+      const effectiveRoundId = roundId || batch.round_id;
+      const round = await env.DB.prepare('SELECT * FROM rounds WHERE id = ?').bind(effectiveRoundId).first<any>();
       if (round?.is_final_round && action === 'HOLD') {
         return jsonResponse({ error: 'HOLD is not permitted in the Final Round' }, 400);
       }
@@ -1504,7 +1643,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       await env.DB.prepare(
         `INSERT OR REPLACE INTO evaluations (id, batch_id, round_id, student_id, action, notes, evaluated_at, evaluated_by)
          VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?)`
-      ).bind(evalId, batchId, roundId, studentId, action, notes || '', user?.username || 'HR').run();
+      ).bind(evalId, batchId, effectiveRoundId, studentId, action, notes || '', user?.username || 'HR').run();
 
       return jsonResponse({ success: true, action });
     }
@@ -1518,6 +1657,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const batchId = submitBatchMatch[1];
       const batch = await env.DB.prepare('SELECT * FROM batches WHERE id = ?').bind(batchId).first<any>();
       if (!batch) return jsonResponse({ error: 'Batch not found' }, 404);
+      if (auth.user.role !== 'TPO' && auth.user.driveId && auth.user.driveId !== batch.drive_id) {
+        return jsonResponse({ error: 'Forbidden: Cross-drive operations are prohibited' }, 403);
+      }
 
       const round = await env.DB.prepare('SELECT * FROM rounds WHERE id = ?').bind(batch.round_id).first<any>();
       const isFinal = Boolean(round?.is_final_round);
@@ -1527,8 +1669,20 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const evalMap = new Map(evals.map((e: any) => [e.student_id, e]));
 
       let nextRound: any = null;
+      let appMap = new Map<string, string>();
       if (!isFinal && round) {
         nextRound = await env.DB.prepare('SELECT * FROM rounds WHERE drive_id = ? AND round_number = ?').bind(batch.drive_id, round.round_number + 1).first<any>();
+        if (nextRound) {
+          const { results: driveApps } = await env.DB.prepare('SELECT id, student_id FROM applications WHERE drive_id = ?').bind(batch.drive_id).all<any>();
+          appMap = new Map(driveApps.map((a: any) => [a.student_id, a.id]));
+        }
+      }
+
+      let studentMap = new Map<string, any>();
+      if (isFinal && batchStudents.length > 0) {
+        const studentIdsList = batchStudents.map((b: any) => `'${b.student_id}'`).join(',');
+        const { results: studentsList } = await env.DB.prepare(`SELECT id, roll_number, full_name, branch FROM students WHERE id IN (${studentIdsList})`).all<any>();
+        studentMap = new Map(studentsList.map((s: any) => [s.id, s]));
       }
 
       const drive = await env.DB.prepare('SELECT * FROM drives WHERE id = ?').bind(batch.drive_id).first<any>();
@@ -1537,6 +1691,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       let holdCount = 0;
       let rejectedCount = 0;
       let placedCount = 0;
+
+      const atomicBatchStatements: any[] = [];
 
       for (const bs of batchStudents) {
         const studentId = bs.student_id;
@@ -1555,54 +1711,81 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         const resultId = `rr_${round?.id || 'rnd'}_${studentId}`;
         const outcome = action === 'SELECT' ? 'SELECTED' : action === 'HOLD' && !isFinal ? 'HOLD' : 'REJECTED';
 
-        await env.DB.prepare(
-          `INSERT OR REPLACE INTO round_results (id, round_id, drive_id, batch_id, student_id, result, notes, finalized_at, finalized_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)`
-        ).bind(resultId, batch.round_id, batch.drive_id, batchId, studentId, outcome, evaluation?.notes || '', user?.username || 'HR').run();
+        atomicBatchStatements.push(
+          env.DB.prepare(
+            `INSERT INTO round_results (id, round_id, drive_id, batch_id, student_id, result, notes, finalized_at, finalized_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+             ON CONFLICT(round_id, student_id) DO UPDATE SET
+               batch_id = excluded.batch_id,
+               result = excluded.result,
+               notes = excluded.notes,
+               finalized_at = datetime('now'),
+               finalized_by = excluded.finalized_by`
+          ).bind(resultId, batch.round_id, batch.drive_id, batchId, studentId, outcome, evaluation?.notes || '', user?.username || 'HR')
+        );
 
         if (action === 'SELECT' || (action === 'HOLD' && !isFinal)) {
           if (!isFinal && nextRound) {
-            const app = await env.DB.prepare('SELECT id FROM applications WHERE drive_id = ? AND student_id = ?').bind(batch.drive_id, studentId).first<any>();
+            const appId = appMap.get(studentId) || null;
             const candId = `cand_${nextRound.id}_${studentId}`;
-            await env.DB.prepare(
-              `INSERT OR REPLACE INTO round_candidates (id, drive_id, round_id, student_id, application_id, entry_status, source_round_id, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`
-            ).bind(candId, batch.drive_id, nextRound.id, studentId, app?.id || null, action === 'HOLD' ? 'PENDING_EVALUATION' : 'ACTIVE', batch.round_id).run();
+            atomicBatchStatements.push(
+              env.DB.prepare(
+                `INSERT INTO round_candidates (id, drive_id, round_id, student_id, application_id, entry_status, source_round_id, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                 ON CONFLICT(round_id, student_id) DO UPDATE SET
+                   entry_status = excluded.entry_status,
+                   application_id = COALESCE(excluded.application_id, round_candidates.application_id)`
+              ).bind(candId, batch.drive_id, nextRound.id, studentId, appId, action === 'HOLD' ? 'PENDING_EVALUATION' : 'ACTIVE', batch.round_id)
+            );
           } else if (isFinal && action === 'SELECT') {
-            const student = await env.DB.prepare('SELECT * FROM students WHERE id = ?').bind(studentId).first<any>();
+            const student = studentMap.get(studentId);
             const placementId = `plc_${batch.drive_id}_${studentId}`;
             if (student) {
-              await env.DB.prepare(
-                `INSERT OR REPLACE INTO placements (id, drive_id, student_id, roll_number, student_name, branch, company_name, job_role, package, placed_at, source_round_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)`
-              ).bind(
-                placementId,
-                batch.drive_id,
-                student.id,
-                student.roll_number,
-                student.full_name,
-                student.branch,
-                drive?.company_name || 'Hiring Company',
-                drive?.job_role || 'Graduate Engineer',
-                drive?.package || '₹6.0 LPA',
-                round?.id
-              ).run();
+              atomicBatchStatements.push(
+                env.DB.prepare(
+                  `INSERT INTO placements (id, drive_id, student_id, roll_number, student_name, branch, company_name, job_role, package, placed_at, source_round_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                     placed_at = datetime('now'),
+                     job_role = excluded.job_role,
+                     package = excluded.package`
+                ).bind(
+                  placementId,
+                  batch.drive_id,
+                  student.id,
+                  student.roll_number,
+                  student.full_name,
+                  student.branch,
+                  drive?.company_name || 'Hiring Company',
+                  drive?.job_role || 'Graduate Engineer',
+                  drive?.package || '₹6.0 LPA',
+                  round?.id
+                )
+              );
             }
           }
         } else {
           // If HR marked as REJECT / deselect on edit:
           if (isFinal) {
-            await env.DB.prepare('DELETE FROM placements WHERE drive_id = ? AND student_id = ?').bind(batch.drive_id, studentId).run();
+            atomicBatchStatements.push(
+              env.DB.prepare('DELETE FROM placements WHERE drive_id = ? AND student_id = ?').bind(batch.drive_id, studentId)
+            );
           } else if (nextRound) {
-            await env.DB.prepare('DELETE FROM round_candidates WHERE round_id = ? AND student_id = ?').bind(nextRound.id, studentId).run();
+            atomicBatchStatements.push(
+              env.DB.prepare('DELETE FROM round_candidates WHERE round_id = ? AND student_id = ?').bind(nextRound.id, studentId)
+            );
           }
         }
       }
 
       // Freeze batch
-      await env.DB.prepare("UPDATE batches SET status = 'SUBMITTED', submitted_at = datetime('now'), submitted_by = ? WHERE id = ?")
-        .bind(user?.username || 'HR', batchId)
-        .run();
+      atomicBatchStatements.push(
+        env.DB.prepare("UPDATE batches SET status = 'SUBMITTED', submitted_at = datetime('now'), submitted_by = ? WHERE id = ?")
+          .bind(user?.username || 'HR', batchId)
+      );
+
+      // Execute entire submission atomically
+      await env.DB.batch(atomicBatchStatements);
 
       return jsonResponse({
         success: true,
@@ -1618,7 +1801,17 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // 12. Round results: /api/round-results/round/:roundId
     const rResultsMatch = path.match(/^\/api\/round-results\/round\/([a-zA-Z0-9_-]+)$/);
     if (rResultsMatch && method === 'GET') {
-      const { results } = await env.DB.prepare('SELECT * FROM round_results WHERE round_id = ?').bind(rResultsMatch[1]).all();
+      const auth = await requireAuth(['TPO', 'COORDINATOR', 'HR']);
+      if (auth.error) return auth.error;
+
+      const roundId = rResultsMatch[1];
+      const round = await env.DB.prepare('SELECT drive_id FROM rounds WHERE id = ?').bind(roundId).first<any>();
+      if (!round) return jsonResponse({ error: 'Round not found' }, 404);
+      if (auth.user.role !== 'TPO' && auth.user.driveId && auth.user.driveId !== round.drive_id) {
+        return jsonResponse({ error: 'Forbidden: Cross-drive operations are prohibited' }, 403);
+      }
+
+      const { results } = await env.DB.prepare('SELECT * FROM round_results WHERE round_id = ?').bind(roundId).all();
       const mapped = results.map((rr: any) => ({
         id: rr.id,
         roundId: rr.round_id,

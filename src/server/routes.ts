@@ -221,6 +221,33 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
     const isTpo = currentUser?.role === 'TPO';
     const isStaff = Boolean(currentUser && ['TPO', 'COORDINATOR', 'HR'].includes(currentUser.role));
 
+    // Fast version probe for ETag calculation (M1 optimization)
+    const probeQuery = isStaff
+      ? `SELECT 
+           (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '') FROM drives) as d_v,
+           (SELECT COUNT(*) FROM rounds) as r_v,
+           (SELECT COUNT(*) FROM placements) as p_v,
+           (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '') FROM students) as s_v,
+           (SELECT COUNT(*) FROM applications) as a_v,
+           (SELECT COUNT(*) FROM round_candidates) as c_v,
+           (SELECT COUNT(*) || ':' || COALESCE(MAX(submitted_at), '') FROM batches) as b_v,
+           (SELECT COUNT(*) FROM batch_students) as bs_v,
+           (SELECT COUNT(*) FROM evaluations) as e_v,
+           (SELECT COUNT(*) FROM round_results) as rr_v`
+      : `SELECT 
+           (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '') FROM drives WHERE status != 'DRAFT') as d_v,
+           (SELECT COUNT(*) FROM rounds) as r_v,
+           (SELECT COUNT(*) FROM placements) as p_v`;
+
+    const probe = await db.prepare(probeQuery).first<any>();
+    const probeStr = probe ? Object.values(probe).join('|') : '';
+    const etag = `W/"sync_${isStaff ? 'staff' : 'pub'}_${isTpo ? 'tpo' : 'notpo'}_${probeStr}"`;
+
+    const ifNoneMatch = req.headers['if-none-match'];
+    if (ifNoneMatch && ifNoneMatch === etag) {
+      return res.status(304).setHeader('ETag', etag).setHeader('Cache-Control', 'private, no-cache').end();
+    }
+
     const [
       studentsRes,
       drivesRes,
@@ -244,8 +271,7 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
              ORDER BY d.drive_date DESC`
           ).all<any>()
         : db
-            .prepare(`SELECT * FROM drives WHERE status != 'DRAFT' OR ? = 1 ORDER BY drive_date DESC`)
-            .bind(isStaff ? 1 : 0)
+            .prepare(`SELECT * FROM drives WHERE status != 'DRAFT' ORDER BY drive_date DESC`)
             .all<any>(),
       db.prepare('SELECT * FROM rounds ORDER BY round_number ASC').all<any>(),
       isStaff ? db.prepare('SELECT * FROM applications ORDER BY applied_at DESC').all<any>() : Promise.resolve({ results: [] }),
@@ -257,7 +283,9 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
       db.prepare('SELECT * FROM placements ORDER BY placed_at DESC').all<any>(),
     ]);
 
-    res.json({
+    res.setHeader('ETag', etag);
+    res.setHeader('Cache-Control', 'private, no-cache');
+    return res.json({
       students: studentsRes.results.map((s) => ({
         id: s.id,
         rollNumber: s.roll_number,
@@ -418,8 +446,8 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
 // STUDENTS (STUDENT MASTER DB) ENDPOINTS
 // -------------------------------------------------------------
 
-// GET /api/students (Public or Auth, with pagination / search)
-apiRouter.get('/students', async (req: Request, res: Response) => {
+// GET /api/students (Authorized Staff Only)
+apiRouter.get('/students', authMiddleware, roleMiddleware(['TPO', 'COORDINATOR', 'HR']), async (req: Request, res: Response) => {
   try {
     const db = getDatabase();
     const search = req.query.search ? String(req.query.search).trim() : '';
@@ -523,7 +551,7 @@ apiRouter.post('/students', authMiddleware, roleMiddleware(['TPO']), async (req:
 
     await db
       .prepare(
-        `INSERT INTO students (id, roll_number, full_name, email, phone, branch, cgpa, active_backlogs, history_of_backlogs, gender, created_at, updated_at)
+        `INSERT INTO students (id, roll_number, full_name, email, phone, college, branch, department, academic_year, cgpa, active_backlogs, history_of_backlogs, gender, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
       )
       .bind(
@@ -536,9 +564,9 @@ apiRouter.post('/students', authMiddleware, roleMiddleware(['TPO']), async (req:
         s.branch || 'CSE',
         s.department || BRANCH_DEPARTMENT_MAP[s.branch] || s.branch || 'Engineering',
         s.academicYear || s.academic_year || '2023-2027',
-        s.cgpa ?? 0,
-        s.activeBacklogs ?? s.active_backlogs ?? 0,
-        s.historyOfBacklogs || 0,
+        Number(s.cgpa ?? 0),
+        Number(s.activeBacklogs ?? s.active_backlogs ?? 0),
+        Number(s.historyOfBacklogs || s.history_of_backlogs || 0),
         s.gender || 'MALE'
       )
       .run();
@@ -698,14 +726,16 @@ apiRouter.get('/drives', async (req: Request, res: Response) => {
     const isTpo = currentUser?.role === 'TPO';
 
     const { results } = await db
-      .prepare(`
-        SELECT d.*, 
-               c.coordinator_username, c.plain_coordinator_password, 
-               c.hr_username, c.plain_hr_password 
-        FROM drives d 
-        LEFT JOIN drive_credentials c ON d.id = c.drive_id 
-        ORDER BY d.drive_date DESC
-      `)
+      .prepare(
+        isTpo
+          ? `SELECT d.*, 
+                    c.coordinator_username, c.plain_coordinator_password, 
+                    c.hr_username, c.plain_hr_password 
+             FROM drives d 
+             LEFT JOIN drive_credentials c ON d.id = c.drive_id 
+             ORDER BY d.drive_date DESC`
+          : `SELECT * FROM drives WHERE status != 'DRAFT' ORDER BY drive_date DESC`
+      )
       .all<any>();
 
     const mapped = results.map((d) => {
@@ -782,6 +812,9 @@ apiRouter.get('/drives/:id', async (req: Request, res: Response) => {
       .first<any>();
 
     if (!d) return res.status(404).json({ error: 'Drive not found' });
+    if (d.status === 'DRAFT' && !isTpo) {
+      return res.status(404).json({ error: 'Drive not found' });
+    }
 
     let branches: string[] = [];
     try {
@@ -875,13 +908,21 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
     const driveId = d.id || `drv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const companySlug = (d.companyName || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-    await db
-      .prepare(
+    const backlogRule =
+      d.backlogRule === 'NOT_APPLICABLE' || d.backlogRule === -1
+        ? 'NOT_APPLICABLE'
+        : Number.isFinite(Number(d.backlogRule))
+        ? Number(d.backlogRule)
+        : 0;
+
+    const driveStatements: any[] = [];
+
+    driveStatements.push(
+      db.prepare(
         `INSERT INTO drives
          (id, company_name, job_role, package, job_description, eligibility_criteria, minimum_cgpa, backlog_rule, eligible_branches, drive_date, drive_time, location, application_deadline, status, retention_expires_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
-      )
-      .bind(
+      ).bind(
         driveId,
         d.companyName,
         d.jobRole,
@@ -889,7 +930,7 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
         d.jobDescription || '',
         d.eligibilityCriteria || '',
         Number(d.minimumCgpa) || 7.0,
-        Number(d.backlogRule) || 0,
+        backlogRule,
         JSON.stringify(d.eligibleBranches || ['CSE', 'CSIT', 'ECE']),
         driveDate,
         d.driveTime || '09:00',
@@ -898,7 +939,7 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
         d.status || 'UPCOMING',
         retentionExpiresAt
       )
-      .run();
+    );
 
     // Recruiter accounts
     const coordUser = d.credentials?.coordinatorUsername || `coord_${companySlug}`;
@@ -911,13 +952,12 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
     const hrSalt = generateSalt();
     const hrHash = await hashPassword(hrPass, hrSalt);
 
-    await db
-      .prepare(
+    driveStatements.push(
+      db.prepare(
         `INSERT INTO drive_credentials
          (id, drive_id, coordinator_username, coordinator_password_hash, coordinator_salt, hr_username, hr_password_hash, hr_salt, plain_coordinator_password, plain_hr_password)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .bind(
+      ).bind(
         `cred_${driveId}`,
         driveId,
         coordUser,
@@ -929,24 +969,36 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
         coordPass,
         hrPass
       )
-      .run();
+    );
 
     // Insert user logins into users table
-    await db
-      .prepare(
-        `INSERT OR REPLACE INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
-      )
-      .bind(`usr_${coordUser}`, coordUser, coordHash, coordSalt, 'COORDINATOR', driveId, d.companyName, `Coordinator (${d.companyName})`)
-      .run();
+    driveStatements.push(
+      db.prepare(
+        `INSERT INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(username) DO UPDATE SET
+           password_hash = excluded.password_hash,
+           salt = excluded.salt,
+           role = excluded.role,
+           drive_id = excluded.drive_id,
+           company_name = excluded.company_name,
+           full_name = excluded.full_name`
+      ).bind(`usr_${coordUser}`, coordUser, coordHash, coordSalt, 'COORDINATOR', driveId, d.companyName, `Coordinator (${d.companyName})`)
+    );
 
-    await db
-      .prepare(
-        `INSERT OR REPLACE INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
-      )
-      .bind(`usr_${hrUser}`, hrUser, hrHash, hrSalt, 'HR', driveId, d.companyName, `HR (${d.companyName})`)
-      .run();
+    driveStatements.push(
+      db.prepare(
+        `INSERT INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(username) DO UPDATE SET
+           password_hash = excluded.password_hash,
+           salt = excluded.salt,
+           role = excluded.role,
+           drive_id = excluded.drive_id,
+           company_name = excluded.company_name,
+           full_name = excluded.full_name`
+      ).bind(`usr_${hrUser}`, hrUser, hrHash, hrSalt, 'HR', driveId, d.companyName, `HR (${d.companyName})`)
+    );
 
     // Rounds: Custom rounds or default 3 rounds
     const customRounds = Array.isArray(d.rounds) && d.rounds.length > 0 ? d.rounds : null;
@@ -955,12 +1007,17 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
       for (let i = 0; i < customRounds.length; i++) {
         const rnd = customRounds[i];
         const rId = rnd.id || `rnd_${driveId}_${i + 1}`;
-        await db
-          .prepare(
-            `INSERT OR REPLACE INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
-          )
-          .bind(
+        driveStatements.push(
+          db.prepare(
+            `INSERT INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+             ON CONFLICT(id) DO UPDATE SET
+               round_name = excluded.round_name,
+               round_type = excluded.round_type,
+               description = excluded.description,
+               status = excluded.status,
+               is_final_round = excluded.is_final_round`
+          ).bind(
             rId,
             driveId,
             i + 1,
@@ -970,34 +1027,36 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
             rnd.status || 'UPCOMING',
             rnd.isFinalRound ? 1 : 0
           )
-          .run();
+        );
       }
     } else {
       // Default 3 rounds
-      await db
-        .prepare(
-          `INSERT OR REPLACE INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
-           VALUES (?, ?, 1, 'Round 1: Screening & Aptitude', 'Aptitude', 'Screening assessment', 'UPCOMING', 0, datetime('now'))`
-        )
-        .bind(`rnd_${driveId}_1`, driveId)
-        .run();
+      driveStatements.push(
+        db.prepare(
+          `INSERT INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
+           VALUES (?, ?, 1, 'Round 1: Screening & Aptitude', 'Aptitude', 'Screening assessment', 'UPCOMING', 0, datetime('now'))
+           ON CONFLICT(id) DO UPDATE SET round_name = excluded.round_name`
+        ).bind(`rnd_${driveId}_1`, driveId)
+      );
 
-      await db
-        .prepare(
-          `INSERT OR REPLACE INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
-           VALUES (?, ?, 2, 'Round 2: Technical Interview', 'Technical', 'Technical evaluation', 'UPCOMING', 0, datetime('now'))`
-        )
-        .bind(`rnd_${driveId}_2`, driveId)
-        .run();
+      driveStatements.push(
+        db.prepare(
+          `INSERT INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
+           VALUES (?, ?, 2, 'Round 2: Technical Interview', 'Technical', 'Technical evaluation', 'UPCOMING', 0, datetime('now'))
+           ON CONFLICT(id) DO UPDATE SET round_name = excluded.round_name`
+        ).bind(`rnd_${driveId}_2`, driveId)
+      );
 
-      await db
-        .prepare(
-          `INSERT OR REPLACE INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
-           VALUES (?, ?, 3, 'Round 3: Final HR Interview', 'HR', 'Final HR round', 'UPCOMING', 1, datetime('now'))`
-        )
-        .bind(`rnd_${driveId}_3`, driveId)
-        .run();
+      driveStatements.push(
+        db.prepare(
+          `INSERT INTO rounds (id, drive_id, round_number, round_name, round_type, description, status, is_final_round, created_at)
+           VALUES (?, ?, 3, 'Round 3: Final HR Interview', 'HR', 'Final HR round', 'UPCOMING', 1, datetime('now'))
+           ON CONFLICT(id) DO UPDATE SET round_name = excluded.round_name`
+        ).bind(`rnd_${driveId}_3`, driveId)
+      );
     }
+
+    await db.batch(driveStatements);
 
     res.status(201).json({ id: driveId, ...d });
   } catch (err: any) {
@@ -1211,12 +1270,17 @@ apiRouter.delete('/rounds/:id', authMiddleware, roleMiddleware(['TPO']), async (
 // -------------------------------------------------------------
 
 // GET /api/applications/drive/:driveId
-apiRouter.get('/applications/drive/:driveId', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+apiRouter.get('/applications/drive/:driveId', authMiddleware, roleMiddleware(['TPO', 'COORDINATOR', 'HR']), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
+    const driveId = req.params.driveId;
+    if (req.user?.role !== 'TPO' && req.user?.driveId && req.user.driveId !== driveId) {
+      return res.status(403).json({ error: 'Forbidden: Cross-drive operations are prohibited' });
+    }
+
     const { results } = await db
       .prepare('SELECT * FROM applications WHERE drive_id = ? ORDER BY applied_at DESC')
-      .bind(req.params.driveId)
+      .bind(driveId)
       .all<any>();
 
     const mapped = results.map((a) => ({
@@ -1395,7 +1459,10 @@ apiRouter.post('/applications/:id/override', authMiddleware, roleMiddleware(['TP
   try {
     const db = getDatabase();
     const appId = req.params.id;
-    const { reason } = req.body;
+    const cleanReason = String(req.body?.reason || '').trim();
+    if (!cleanReason) {
+      return res.status(400).json({ error: 'Reason is required for TPO eligibility override' });
+    }
 
     const app = await db.prepare('SELECT * FROM applications WHERE id = ?').bind(appId).first<any>();
     if (!app) return res.status(404).json({ error: 'Application not found' });
@@ -1406,7 +1473,7 @@ apiRouter.post('/applications/:id/override', authMiddleware, roleMiddleware(['TP
          SET eligibility_status = 'ELIGIBLE', eligibility_override = 1, override_reason = ?, override_by = ?, override_at = datetime('now')
          WHERE id = ?`
       )
-      .bind(reason || 'Approved by TPO Exception', req.user?.username || 'TPO', appId)
+      .bind(cleanReason, req.user?.username || 'TPO', appId)
       .run();
 
     // Add to Round 1 candidate pool
@@ -1436,12 +1503,19 @@ apiRouter.post('/applications/:id/override', authMiddleware, roleMiddleware(['TP
 // -------------------------------------------------------------
 
 // GET /api/rounds/:roundId/candidates
-apiRouter.get('/rounds/:roundId/candidates', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+apiRouter.get('/rounds/:roundId/candidates', authMiddleware, roleMiddleware(['TPO', 'COORDINATOR', 'HR']), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
+    const roundId = req.params.roundId;
+    const round = await db.prepare('SELECT drive_id FROM rounds WHERE id = ?').bind(roundId).first<any>();
+    if (!round) return res.status(404).json({ error: 'Round not found' });
+    if (req.user?.role !== 'TPO' && req.user?.driveId && req.user.driveId !== round.drive_id) {
+      return res.status(403).json({ error: 'Forbidden: Cross-drive operations are prohibited' });
+    }
+
     const { results } = await db
       .prepare('SELECT * FROM round_candidates WHERE round_id = ?')
-      .bind(req.params.roundId)
+      .bind(roundId)
       .all<any>();
 
     const mapped = results.map((rc) => ({
@@ -1462,12 +1536,19 @@ apiRouter.get('/rounds/:roundId/candidates', authMiddleware, async (req: Authent
 });
 
 // GET /api/batches/round/:roundId
-apiRouter.get('/batches/round/:roundId', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+apiRouter.get('/batches/round/:roundId', authMiddleware, roleMiddleware(['TPO', 'COORDINATOR', 'HR']), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
+    const roundId = req.params.roundId;
+    const round = await db.prepare('SELECT drive_id FROM rounds WHERE id = ?').bind(roundId).first<any>();
+    if (!round) return res.status(404).json({ error: 'Round not found' });
+    if (req.user?.role !== 'TPO' && req.user?.driveId && req.user.driveId !== round.drive_id) {
+      return res.status(403).json({ error: 'Forbidden: Cross-drive operations are prohibited' });
+    }
+
     const { results } = await db
       .prepare('SELECT * FROM batches WHERE round_id = ? ORDER BY created_at ASC')
-      .bind(req.params.roundId)
+      .bind(roundId)
       .all<any>();
 
     const mapped = results.map((b) => ({
@@ -1500,16 +1581,23 @@ apiRouter.post('/batches', authMiddleware, roleMiddleware(['COORDINATOR', 'TPO']
       return res.status(400).json({ error: 'Round ID and Batch Name are required' });
     }
 
+    const round = await db.prepare('SELECT drive_id FROM rounds WHERE id = ?').bind(roundId).first<any>();
+    if (!round) return res.status(404).json({ error: 'Round not found' });
+    if (req.user?.role !== 'TPO' && req.user?.driveId && req.user.driveId !== round.drive_id) {
+      return res.status(403).json({ error: 'Forbidden: Cross-drive operations are prohibited' });
+    }
+    const actualDriveId = round.drive_id || driveId;
+
     const batchId = `btch_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     await db
       .prepare(
         `INSERT INTO batches (id, round_id, drive_id, batch_name, capacity_type, capacity, status, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'DRAFT', ?, datetime('now'))`
+         VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, datetime('now'))`
       )
       .bind(
         batchId,
         roundId,
-        driveId,
+        actualDriveId,
         batchName,
         capacityType || 'LIMITED',
         capacityType === 'LIMITED' ? Number(capacity) || 30 : null,
@@ -1517,18 +1605,21 @@ apiRouter.post('/batches', authMiddleware, roleMiddleware(['COORDINATOR', 'TPO']
       )
       .run();
 
-    res.status(201).json({ id: batchId, roundId, driveId, batchName, capacityType, capacity, status: 'DRAFT' });
+    res.status(201).json({ id: batchId, roundId, driveId: actualDriveId, batchName, capacityType, capacity, status: 'OPEN' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // DELETE /api/batches/:id (Coordinator & TPO)
-apiRouter.delete('/batches/:id', authMiddleware, roleMiddleware(['COORDINATOR', 'TPO']), async (req: Request, res: Response) => {
+apiRouter.delete('/batches/:id', authMiddleware, roleMiddleware(['COORDINATOR', 'TPO']), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
-    const batch = await db.prepare('SELECT status FROM batches WHERE id = ?').bind(req.params.id).first<any>();
+    const batch = await db.prepare('SELECT drive_id, status FROM batches WHERE id = ?').bind(req.params.id).first<any>();
     if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    if (req.user?.role !== 'TPO' && req.user?.driveId && req.user.driveId !== batch.drive_id) {
+      return res.status(403).json({ error: 'Forbidden: Cross-drive operations are prohibited' });
+    }
     if (batch.status === 'SUBMITTED') {
       return res.status(403).json({ error: 'Rule 21: Cannot delete a frozen/submitted batch' });
     }
@@ -1543,12 +1634,19 @@ apiRouter.delete('/batches/:id', authMiddleware, roleMiddleware(['COORDINATOR', 
 });
 
 // GET /api/batches/:id/students
-apiRouter.get('/batches/:id/students', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+apiRouter.get('/batches/:id/students', authMiddleware, roleMiddleware(['TPO', 'COORDINATOR', 'HR']), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
+    const batchId = req.params.id;
+    const batch = await db.prepare('SELECT drive_id FROM batches WHERE id = ?').bind(batchId).first<any>();
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    if (req.user?.role !== 'TPO' && req.user?.driveId && req.user.driveId !== batch.drive_id) {
+      return res.status(403).json({ error: 'Forbidden: Cross-drive operations are prohibited' });
+    }
+
     const { results } = await db
       .prepare('SELECT * FROM batch_students WHERE batch_id = ?')
-      .bind(req.params.id)
+      .bind(batchId)
       .all<any>();
 
     const mapped = results.map((bs) => ({
@@ -1567,7 +1665,7 @@ apiRouter.get('/batches/:id/students', authMiddleware, async (req: Authenticated
 });
 
 // POST /api/batches/:id/assign (Coordinator Bulk Assignment with Database-Level Uniqueness & Capacity Guard)
-apiRouter.post('/batches/:id/assign', authMiddleware, roleMiddleware(['COORDINATOR', 'TPO']), async (req: Request, res: Response) => {
+apiRouter.post('/batches/:id/assign', authMiddleware, roleMiddleware(['COORDINATOR', 'TPO']), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
     const batchId = req.params.id;
@@ -1579,6 +1677,9 @@ apiRouter.post('/batches/:id/assign', authMiddleware, roleMiddleware(['COORDINAT
 
     const batch = await db.prepare('SELECT * FROM batches WHERE id = ?').bind(batchId).first<any>();
     if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    if (req.user?.role !== 'TPO' && req.user?.driveId && req.user.driveId !== batch.drive_id) {
+      return res.status(403).json({ error: 'Forbidden: Cross-drive operations are prohibited' });
+    }
     if (batch.status === 'SUBMITTED') {
       return res.status(403).json({ error: 'Batch is frozen and read-only' });
     }
@@ -1598,50 +1699,49 @@ apiRouter.post('/batches/:id/assign', authMiddleware, roleMiddleware(['COORDINAT
       }
     }
 
-    let added = 0;
-    const errors: string[] = [];
+    // Pre-validate candidates already assigned in this round (Rule 15: UNIQUE(round_id, student_id))
+    const placeholders = studentIds.map(() => '?').join(',');
+    const existingRows = await db
+      .prepare(`SELECT student_id FROM batch_students WHERE round_id = ? AND student_id IN (${placeholders})`)
+      .bind(batch.round_id, ...studentIds)
+      .all<{ student_id: string }>();
 
-    for (const sId of studentIds) {
-      // Check Rule 15: UNIQUE(round_id, student_id)
-      const existingInRound = await db
-        .prepare('SELECT id FROM batch_students WHERE round_id = ? AND student_id = ?')
-        .bind(batch.round_id, sId)
-        .first();
+    const assignedSet = new Set((existingRows.results || []).map((r) => r.student_id));
+    const validStudentIds = studentIds.filter((id: string) => !assignedSet.has(id));
+    const errors = studentIds
+      .filter((id: string) => assignedSet.has(id))
+      .map((id: string) => `Student ${id} is already assigned to a batch in this round.`);
 
-      if (existingInRound) {
-        errors.push(`Student ${sId} is already assigned to a batch in this round.`);
-        continue;
-      }
+    const assignStatements = validStudentIds.map((sId: string) =>
+      db.prepare(
+        `INSERT INTO batch_students (id, batch_id, round_id, drive_id, student_id, assigned_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(round_id, student_id) DO NOTHING`
+      ).bind(`bs_${batchId}_${sId}`, batchId, batch.round_id, batch.drive_id, sId)
+    );
 
-      await db
-        .prepare(
-          `INSERT INTO batch_students (id, batch_id, round_id, drive_id, student_id, assigned_at)
-           VALUES (?, ?, ?, ?, ?, datetime('now'))`
-        )
-        .bind(`bs_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`, batchId, batch.round_id, batch.drive_id, sId)
-        .run();
-
-      added++;
+    if (assignStatements.length > 0) {
+      await db.batch(assignStatements);
     }
 
-    // Auto-update batch status to ACTIVE if it has students
-    await db.prepare("UPDATE batches SET status = 'ACTIVE' WHERE id = ? AND status = 'DRAFT'").bind(batchId).run();
-
-    res.json({ success: true, added, errors });
+    res.json({ success: true, added: validStudentIds.length, errors });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // POST /api/batches/:id/remove (Remove Student from Batch)
-apiRouter.post('/batches/:id/remove', authMiddleware, roleMiddleware(['COORDINATOR', 'TPO']), async (req: Request, res: Response) => {
+apiRouter.post('/batches/:id/remove', authMiddleware, roleMiddleware(['COORDINATOR', 'TPO']), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
     const batchId = req.params.id;
     const { studentId } = req.body;
 
-    const batch = await db.prepare('SELECT status FROM batches WHERE id = ?').bind(batchId).first<any>();
+    const batch = await db.prepare('SELECT drive_id, status FROM batches WHERE id = ?').bind(batchId).first<any>();
     if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    if (req.user?.role !== 'TPO' && req.user?.driveId && req.user.driveId !== batch.drive_id) {
+      return res.status(403).json({ error: 'Forbidden: Cross-drive operations are prohibited' });
+    }
     if (batch.status === 'SUBMITTED') {
       return res.status(403).json({ error: 'Batch is frozen' });
     }
@@ -1662,9 +1762,15 @@ apiRouter.post('/batches/:id/remove', authMiddleware, roleMiddleware(['COORDINAT
 // -------------------------------------------------------------
 
 // GET /api/evaluations/batch/:batchId
-apiRouter.get('/evaluations/batch/:batchId', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+apiRouter.get('/evaluations/batch/:batchId', authMiddleware, roleMiddleware(['TPO', 'HR']), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
+    const batch = await db.prepare('SELECT drive_id FROM batches WHERE id = ?').bind(req.params.batchId).first<any>();
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    if (req.user?.role !== 'TPO' && req.user?.driveId && req.user.driveId !== batch.drive_id) {
+      return res.status(403).json({ error: 'Forbidden: Cross-drive operations are prohibited' });
+    }
+
     const { results } = await db
       .prepare('SELECT * FROM evaluations WHERE batch_id = ?')
       .bind(req.params.batchId)
@@ -1688,9 +1794,15 @@ apiRouter.get('/evaluations/batch/:batchId', authMiddleware, async (req: Authent
 });
 
 // GET /api/round-results/round/:roundId
-apiRouter.get('/round-results/round/:roundId', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+apiRouter.get('/round-results/round/:roundId', authMiddleware, roleMiddleware(['TPO', 'COORDINATOR', 'HR']), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
+    const round = await db.prepare('SELECT drive_id FROM rounds WHERE id = ?').bind(req.params.roundId).first<any>();
+    if (!round) return res.status(404).json({ error: 'Round not found' });
+    if (req.user?.role !== 'TPO' && req.user?.driveId && req.user.driveId !== round.drive_id) {
+      return res.status(403).json({ error: 'Forbidden: Cross-drive operations are prohibited' });
+    }
+
     const { results } = await db
       .prepare('SELECT * FROM round_results WHERE round_id = ?')
       .bind(req.params.roundId)
@@ -1720,12 +1832,21 @@ apiRouter.post('/evaluations', authMiddleware, roleMiddleware(['HR', 'TPO']), as
     const db = getDatabase();
     const { batchId, roundId, studentId, action, notes } = req.body;
 
-    const batch = await db.prepare('SELECT status FROM batches WHERE id = ?').bind(batchId).first<any>();
+    const batch = await db.prepare('SELECT * FROM batches WHERE id = ?').bind(batchId).first<any>();
     if (!batch) {
       return res.status(404).json({ error: 'Batch not found' });
     }
+    if (req.user?.role !== 'TPO' && req.user?.driveId && req.user.driveId !== batch.drive_id) {
+      return res.status(403).json({ error: 'Forbidden: Cross-drive operations are prohibited' });
+    }
 
-    const round = await db.prepare('SELECT is_final_round FROM rounds WHERE id = ?').bind(roundId).first<any>();
+    const membership = await db.prepare('SELECT id FROM batch_students WHERE batch_id = ? AND student_id = ?').bind(batchId, studentId).first<any>();
+    if (!membership) {
+      return res.status(400).json({ error: 'Student is not assigned to this batch' });
+    }
+
+    const effectiveRoundId = roundId || batch.round_id;
+    const round = await db.prepare('SELECT is_final_round FROM rounds WHERE id = ?').bind(effectiveRoundId).first<any>();
     // Rule 22: HOLD is disabled in Final Round
     if (round?.is_final_round && action === 'HOLD') {
       return res.status(400).json({ error: 'Rule 22: HOLD is not permitted in the Final Round' });
@@ -1739,7 +1860,7 @@ apiRouter.post('/evaluations', authMiddleware, roleMiddleware(['HR', 'TPO']), as
       .bind(
         `eval_${batchId}_${studentId}`,
         batchId,
-        roundId,
+        effectiveRoundId,
         studentId,
         action,
         notes || '',
@@ -1761,6 +1882,9 @@ apiRouter.post('/batches/:id/submit', authMiddleware, roleMiddleware(['HR', 'TPO
 
     const batch = await db.prepare('SELECT * FROM batches WHERE id = ?').bind(batchId).first<any>();
     if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    if (req.user?.role !== 'TPO' && req.user?.driveId && req.user.driveId !== batch.drive_id) {
+      return res.status(403).json({ error: 'Forbidden: Cross-drive operations are prohibited' });
+    }
 
     const round = await db.prepare('SELECT * FROM rounds WHERE id = ?').bind(batch.round_id).first<any>();
     const isFinal = Boolean(round?.is_final_round);
@@ -1781,11 +1905,23 @@ apiRouter.post('/batches/:id/submit', authMiddleware, roleMiddleware(['HR', 'TPO
 
     // Find next round if not final
     let nextRound: any = null;
-    if (!isFinal) {
+    let appMap = new Map<string, string>();
+    if (!isFinal && round) {
       nextRound = await db
         .prepare('SELECT * FROM rounds WHERE drive_id = ? AND round_number = ?')
         .bind(batch.drive_id, round.round_number + 1)
         .first<any>();
+      if (nextRound) {
+        const { results: driveApps } = await db.prepare('SELECT id, student_id FROM applications WHERE drive_id = ?').bind(batch.drive_id).all<any>();
+        appMap = new Map((driveApps || []).map((a: any) => [a.student_id, a.id]));
+      }
+    }
+
+    let studentMap = new Map<string, any>();
+    if (isFinal && batchStudents.length > 0) {
+      const studentIdsList = batchStudents.map((b) => `'${b.student_id}'`).join(',');
+      const { results: studentsList } = await db.prepare(`SELECT id, roll_number, full_name, branch FROM students WHERE id IN (${studentIdsList})`).all<any>();
+      studentMap = new Map((studentsList || []).map((s: any) => [s.id, s]));
     }
 
     const hrUser = req.user?.username || 'HR';
@@ -1796,82 +1932,64 @@ apiRouter.post('/batches/:id/submit', authMiddleware, roleMiddleware(['HR', 'TPO
     let rejectedCount = 0;
     let placedCount = 0;
 
-    for (const bs of batchStudents) {
-      const evaluation = evalMap.get(bs.student_id);
-      let decision: 'SELECTED' | 'HOLD' | 'REJECTED' = 'REJECTED';
+    const atomicBatchStatements: any[] = [];
 
-      if (evaluation) {
-        if (evaluation.action === 'SELECT') {
-          decision = 'SELECTED';
-          selectedCount++;
-          if (isFinal) placedCount++;
-        } else if (evaluation.action === 'HOLD' && !isFinal) {
-          decision = 'HOLD';
-          holdCount++;
-        } else {
-          decision = 'REJECTED';
-          rejectedCount++;
-        }
+    for (const bs of batchStudents) {
+      const studentId = bs.student_id;
+      const evaluation = evalMap.get(studentId);
+      const action = evaluation ? evaluation.action : 'REJECT';
+
+      if (action === 'SELECT') {
+        selectedCount++;
+        if (isFinal) placedCount++;
+      } else if (action === 'HOLD' && !isFinal) {
+        holdCount++;
       } else {
         rejectedCount++;
       }
 
-      // Record in round_results
-      await db
-        .prepare(
-          `INSERT OR REPLACE INTO round_results (id, round_id, drive_id, batch_id, student_id, result, notes, finalized_at, finalized_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)`
-        )
-        .bind(
-          `rr_${round.id}_${bs.student_id}`,
-          round.id,
-          batch.drive_id,
-          batchId,
-          bs.student_id,
-          decision,
-          evaluation?.notes || '',
-          hrUser
-        )
-        .run();
+      const resultId = `rr_${round?.id || 'rnd'}_${studentId}`;
+      const outcome = action === 'SELECT' ? 'SELECTED' : action === 'HOLD' && !isFinal ? 'HOLD' : 'REJECTED';
 
-      // If SELECT or HOLD in non-final round, add to next round candidate pool
-      if (!isFinal && nextRound) {
-        if (decision === 'SELECTED' || decision === 'HOLD') {
-          await db
-            .prepare(
-              `INSERT OR REPLACE INTO round_candidates (id, drive_id, round_id, student_id, application_id, entry_status, source_round_id, created_at)
-               VALUES (?, ?, ?, ?, NULL, ?, ?, datetime('now'))`
-            )
-            .bind(
-              `cand_${nextRound.id}_${bs.student_id}`,
-              batch.drive_id,
-              nextRound.id,
-              bs.student_id,
-              decision === 'HOLD' ? 'PENDING_EVALUATION' : 'ACTIVE',
-              round.id
-            )
-            .run();
-        } else {
-          // If rejected, remove from next round candidate pool if previously promoted
-          await db
-            .prepare('DELETE FROM round_candidates WHERE round_id = ? AND student_id = ?')
-            .bind(nextRound.id, bs.student_id)
-            .run();
-        }
-      }
+      atomicBatchStatements.push(
+        db.prepare(
+          `INSERT INTO round_results (id, round_id, drive_id, batch_id, student_id, result, notes, finalized_at, finalized_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+           ON CONFLICT(round_id, student_id) DO UPDATE SET
+             batch_id = excluded.batch_id,
+             result = excluded.result,
+             notes = excluded.notes,
+             finalized_at = datetime('now'),
+             finalized_by = excluded.finalized_by`
+        ).bind(resultId, batch.round_id, batch.drive_id, batchId, studentId, outcome, evaluation?.notes || '', hrUser)
+      );
 
-      // If Final Round and SELECT -> create permanent placement record
-      if (isFinal) {
-        if (decision === 'SELECTED') {
-          const student = await db.prepare('SELECT * FROM students WHERE id = ?').bind(bs.student_id).first<any>();
+      if (action === 'SELECT' || (action === 'HOLD' && !isFinal)) {
+        if (!isFinal && nextRound) {
+          const appId = appMap.get(studentId) || null;
+          const candId = `cand_${nextRound.id}_${studentId}`;
+          atomicBatchStatements.push(
+            db.prepare(
+              `INSERT INTO round_candidates (id, drive_id, round_id, student_id, application_id, entry_status, source_round_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(round_id, student_id) DO UPDATE SET
+                 entry_status = excluded.entry_status,
+                 application_id = COALESCE(excluded.application_id, round_candidates.application_id)`
+            ).bind(candId, batch.drive_id, nextRound.id, studentId, appId, action === 'HOLD' ? 'PENDING_EVALUATION' : 'ACTIVE', batch.round_id)
+          );
+        } else if (isFinal && action === 'SELECT') {
+          const student = studentMap.get(studentId);
+          const placementId = `plc_${batch.drive_id}_${studentId}`;
           if (student) {
-            const placementId = `plc_${batch.drive_id}_${bs.student_id}`;
-            await db
-              .prepare(
-                `INSERT OR REPLACE INTO placements (id, drive_id, student_id, roll_number, student_name, branch, company_name, job_role, package, placed_at, source_round_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)`
-              )
-              .bind(
+            atomicBatchStatements.push(
+              db.prepare(
+                `INSERT INTO placements (id, drive_id, student_id, roll_number, student_name, branch, company_name, job_role, package, placed_at, source_round_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+                 ON CONFLICT(id) DO UPDATE SET
+                   placed_at = datetime('now'),
+                   job_role = excluded.job_role,
+                   package = excluded.package`
+              ).bind(
                 placementId,
                 batch.drive_id,
                 student.id,
@@ -1881,25 +1999,33 @@ apiRouter.post('/batches/:id/submit', authMiddleware, roleMiddleware(['HR', 'TPO
                 drive?.company_name || 'Hiring Company',
                 drive?.job_role || 'Graduate Engineer',
                 drive?.package || '₹6.0 LPA',
-                round.id
+                round?.id
               )
-              .run();
+            );
           }
-        } else {
-          // If rejected/deselected, remove any placement for this student on this drive
-          await db
-            .prepare('DELETE FROM placements WHERE drive_id = ? AND student_id = ?')
-            .bind(batch.drive_id, bs.student_id)
-            .run();
+        }
+      } else {
+        // If rejected / deselected
+        if (isFinal) {
+          atomicBatchStatements.push(
+            db.prepare('DELETE FROM placements WHERE drive_id = ? AND student_id = ?').bind(batch.drive_id, studentId)
+          );
+        } else if (nextRound) {
+          atomicBatchStatements.push(
+            db.prepare('DELETE FROM round_candidates WHERE round_id = ? AND student_id = ?').bind(nextRound.id, studentId)
+          );
         }
       }
     }
 
     // Freeze batch (Rule 21)
-    await db
-      .prepare("UPDATE batches SET status = 'SUBMITTED', submitted_at = datetime('now'), submitted_by = ? WHERE id = ?")
-      .bind(hrUser, batchId)
-      .run();
+    atomicBatchStatements.push(
+      db.prepare("UPDATE batches SET status = 'SUBMITTED', submitted_at = datetime('now'), submitted_by = ? WHERE id = ?")
+        .bind(hrUser, batchId)
+    );
+
+    // Execute entire submission atomically
+    await db.batch(atomicBatchStatements);
 
     res.json({
       success: true,
@@ -1979,14 +2105,13 @@ apiRouter.delete('/drives/:id/purge', authMiddleware, roleMiddleware(['TPO']), a
     const drive = await db.prepare('SELECT * FROM drives WHERE id = ?').bind(driveId).first<any>();
     if (!drive) return res.status(404).json({ error: 'Drive not found' });
 
-    // Record in archives table
+    // Record in archives table and purge all drive-scoped records atomically
     const archiveId = `arch_${Date.now()}`;
-    await db
-      .prepare(
+    const purgeStatements = [
+      db.prepare(
         `INSERT INTO drive_archives (id, drive_id, company_name, drive_date, archive_filename, archived_at, archived_by, metadata_json)
          VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?)`
-      )
-      .bind(
+      ).bind(
         archiveId,
         driveId,
         drive.company_name,
@@ -1994,11 +2119,21 @@ apiRouter.delete('/drives/:id/purge', authMiddleware, roleMiddleware(['TPO']), a
         `IRON_ARCHIVE_${drive.company_name.replace(/[^a-zA-Z0-9]/g, '_')}_${drive.drive_date}.zip`,
         req.user?.username || 'TPO',
         JSON.stringify(drive)
-      )
-      .run();
+      ),
+      db.prepare('DELETE FROM placements WHERE drive_id = ?').bind(driveId),
+      db.prepare('DELETE FROM evaluations WHERE round_id IN (SELECT id FROM rounds WHERE drive_id = ?)').bind(driveId),
+      db.prepare('DELETE FROM round_results WHERE drive_id = ?').bind(driveId),
+      db.prepare('DELETE FROM batch_students WHERE drive_id = ?').bind(driveId),
+      db.prepare('DELETE FROM batches WHERE drive_id = ?').bind(driveId),
+      db.prepare('DELETE FROM round_candidates WHERE drive_id = ?').bind(driveId),
+      db.prepare('DELETE FROM applications WHERE drive_id = ?').bind(driveId),
+      db.prepare('DELETE FROM rounds WHERE drive_id = ?').bind(driveId),
+      db.prepare('DELETE FROM drive_credentials WHERE drive_id = ?').bind(driveId),
+      db.prepare('DELETE FROM users WHERE drive_id = ?').bind(driveId),
+      db.prepare('DELETE FROM drives WHERE id = ?').bind(driveId),
+    ];
 
-    // Delete drive (Cascades to applications, rounds, batches, evaluations, round_results; Student Master DB is NOT touched)
-    await db.prepare('DELETE FROM drives WHERE id = ?').bind(driveId).run();
+    await db.batch(purgeStatements);
 
     res.json({ success: true, archiveId });
   } catch (err: any) {

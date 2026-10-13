@@ -276,8 +276,9 @@ export const api = {
     },
   },
 
-  // Real-Time Sync & Consolidation
+  // Real-Time Sync & Consolidation (with ETag & 304 Not Modified Support)
   sync: {
+    lastEtag: '' as string,
     async getFullState(): Promise<{
       students: Student[];
       drives: Drive[];
@@ -289,8 +290,34 @@ export const api = {
       evaluations: any[];
       roundResults: any[];
       placements: Placement[];
-    }> {
-      return request('/sync');
+    } | null> {
+      try {
+        const headers: Record<string, string> = {
+          ...getAuthHeaders() as Record<string, string>,
+        };
+        if (this.lastEtag) {
+          headers['If-None-Match'] = this.lastEtag;
+        }
+
+        const res = await fetch(`${API_BASE}/sync`, { headers });
+        if (res.status === 304) {
+          return null; // Not modified: data unchanged on server
+        }
+
+        const etag = res.headers.get('ETag');
+        if (etag) {
+          this.lastEtag = etag;
+        }
+
+        if (!res.ok) {
+          return null;
+        }
+
+        const data = await res.json();
+        return data;
+      } catch {
+        return null;
+      }
     },
   },
 

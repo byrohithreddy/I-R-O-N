@@ -300,6 +300,7 @@ class IronStorage {
 
   public saveStudent(studentData: Omit<Student, 'id' | 'createdAt' | 'updatedAt'>, id?: string): Student {
     const students = this.studentsCache;
+    const prevCache = [...this.studentsCache];
     const now = new Date().toISOString();
     const cleanRoll = studentData.rollNumber.trim().toUpperCase();
 
@@ -323,7 +324,11 @@ class IronStorage {
       this.notifyListeners();
       api.students.update(id, updated)
         .then(() => this.syncWithBackend())
-        .catch(console.warn);
+        .catch((err) => {
+          console.warn('Backend student update failed, rolling back:', err);
+          this.studentsCache = prevCache;
+          this.notifyListeners();
+        });
       return updated;
     }
 
@@ -338,16 +343,60 @@ class IronStorage {
     this.notifyListeners();
     api.students.create(newStudent)
       .then(() => this.syncWithBackend())
-      .catch(console.warn);
+      .catch((err) => {
+        console.warn('Backend student create failed, rolling back:', err);
+        this.studentsCache = prevCache;
+        this.notifyListeners();
+      });
     return newStudent;
   }
 
+  public async saveStudentAsync(
+    studentData: Omit<Student, 'id' | 'createdAt' | 'updatedAt'>,
+    id?: string
+  ): Promise<Student> {
+    const prevCache = [...this.studentsCache];
+    const saved = this.saveStudent(studentData, id);
+    try {
+      if (id) {
+        await api.students.update(id, saved);
+      } else {
+        await api.students.create(saved);
+      }
+      await this.syncWithBackend().catch(() => {});
+      return saved;
+    } catch (err: any) {
+      this.studentsCache = prevCache;
+      this.notifyListeners();
+      throw new Error(`Failed to persist student record to server: ${err.message || err}`);
+    }
+  }
+
   public deleteStudent(id: string): void {
+    const prevCache = [...this.studentsCache];
     this.studentsCache = this.studentsCache.filter((s) => s.id !== id);
     this.notifyListeners();
     api.students.delete(id)
       .then(() => this.syncWithBackend())
-      .catch(console.warn);
+      .catch((err) => {
+        console.warn('Backend student deletion failed, rolling back:', err);
+        this.studentsCache = prevCache;
+        this.notifyListeners();
+      });
+  }
+
+  public async deleteStudentAsync(id: string): Promise<void> {
+    const prevCache = [...this.studentsCache];
+    this.studentsCache = this.studentsCache.filter((s) => s.id !== id);
+    this.notifyListeners();
+    try {
+      await api.students.delete(id);
+      await this.syncWithBackend().catch(() => {});
+    } catch (err: any) {
+      this.studentsCache = prevCache;
+      this.notifyListeners();
+      throw new Error(`Failed to delete student on server: ${err.message || err}`);
+    }
   }
 
   // --- DRIVES ---
@@ -578,6 +627,9 @@ class IronStorage {
       rounds[idx] = updated;
       this.set(STORAGE_KEYS.ROUNDS, rounds);
       this.notifyListeners();
+      if (syncToBackend) {
+        api.rounds.create(updated).catch(console.warn);
+      }
       return updated;
     } else {
       const newRound: DriveRound = {
@@ -611,11 +663,47 @@ class IronStorage {
     }
   }
 
+  public async saveRoundAsync(roundData: Partial<DriveRound>, id?: string): Promise<DriveRound> {
+    const prevRounds = JSON.parse(JSON.stringify(this.getRounds()));
+    const saved = this.saveRound(roundData, id, false);
+    try {
+      await api.rounds.create(saved);
+      await this.syncWithBackend().catch(() => {});
+      return saved;
+    } catch (err: any) {
+      this.set(STORAGE_KEYS.ROUNDS, prevRounds);
+      this.notifyListeners();
+      throw new Error(`Failed to save round on server: ${err.message || err}`);
+    }
+  }
+
   public deleteRound(id: string): void {
+    const prevRounds = this.getRounds();
     const rounds = this.getRounds().filter((r) => r.id !== id);
     this.set(STORAGE_KEYS.ROUNDS, rounds);
     this.notifyListeners();
-    api.rounds.delete(id).then(() => this.syncWithBackend()).catch(console.warn);
+    api.rounds.delete(id)
+      .then(() => this.syncWithBackend())
+      .catch((err) => {
+        console.warn('Backend round delete failed, rolling back:', err);
+        this.set(STORAGE_KEYS.ROUNDS, prevRounds);
+        this.notifyListeners();
+      });
+  }
+
+  public async deleteRoundAsync(id: string): Promise<void> {
+    const prevRounds = this.getRounds();
+    const rounds = this.getRounds().filter((r) => r.id !== id);
+    this.set(STORAGE_KEYS.ROUNDS, rounds);
+    this.notifyListeners();
+    try {
+      await api.rounds.delete(id);
+      await this.syncWithBackend().catch(() => {});
+    } catch (err: any) {
+      this.set(STORAGE_KEYS.ROUNDS, prevRounds);
+      this.notifyListeners();
+      throw new Error(`Failed to delete round on server: ${err.message || err}`);
+    }
   }
 
   // --- ELIGIBILITY & APPLICATIONS ---
@@ -707,9 +795,7 @@ class IronStorage {
 
     // 4. Eligibility Check (Rule 8)
     const eligibility = this.checkEligibility(student, drive);
-    if (!eligibility.isEligible) {
-      throw new Error(`Application rejected: ${eligibility.reasons.join('. ')}`);
-    }
+    const isEligible = eligibility.isEligible;
 
     // 5. Create Application
     const newApp: Application = {
@@ -718,7 +804,7 @@ class IronStorage {
       studentId: student.id,
       applicationEmail: email.trim(),
       applicationPhone: phone.trim(),
-      eligibilityStatus: 'ELIGIBLE',
+      eligibilityStatus: isEligible ? 'ELIGIBLE' : 'NOT_ELIGIBLE',
       eligibilityOverride: false,
       appliedAt: new Date().toISOString(),
       status: 'APPLIED',
@@ -728,22 +814,24 @@ class IronStorage {
     allApps.unshift(newApp);
     this.set(STORAGE_KEYS.APPLICATIONS, allApps);
 
-    // 6. Automatically add to Round 1 Candidates pool
-    const rounds = this.getRounds(driveId);
-    if (rounds.length > 0) {
-      const round1 = rounds[0];
-      const candidates = this.getCandidates();
-      const newCand: RoundCandidate = {
-        id: `cand_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
-        driveId,
-        roundId: round1.id,
-        studentId: student.id,
-        applicationId: newApp.id,
-        entryStatus: 'ACTIVE',
-        createdAt: new Date().toISOString(),
-      };
-      candidates.push(newCand);
-      this.set(STORAGE_KEYS.CANDIDATES, candidates);
+    // 6. Automatically add to Round 1 Candidates pool ONLY IF eligible
+    if (isEligible) {
+      const rounds = this.getRounds(driveId);
+      if (rounds.length > 0) {
+        const round1 = rounds[0];
+        const candidates = this.getCandidates();
+        const newCand: RoundCandidate = {
+          id: `cand_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+          driveId,
+          roundId: round1.id,
+          studentId: student.id,
+          applicationId: newApp.id,
+          entryStatus: 'ACTIVE',
+          createdAt: new Date().toISOString(),
+        };
+        candidates.push(newCand);
+        this.set(STORAGE_KEYS.CANDIDATES, candidates);
+      }
     }
 
     this.notifyListeners();
@@ -947,6 +1035,42 @@ class IronStorage {
     return newBatch;
   }
 
+  public async createBatchAsync(
+    roundId: string,
+    driveId: string,
+    batchName: string,
+    capacityType: 'LIMITED' | 'UNLIMITED' = 'LIMITED',
+    capacity?: number,
+    createdBy: string = 'Coordinator'
+  ): Promise<Batch> {
+    const prevBatches = [...this.getBatches()];
+    const batch = this.createBatch(roundId, driveId, batchName, capacityType, capacity ?? null, createdBy);
+    try {
+      const res = await api.batches.create({
+        roundId,
+        driveId,
+        batchName: batch.batchName,
+        capacityType,
+        capacity: batch.capacity,
+      });
+      if (res && res.id) {
+        const batches = this.getBatches();
+        const idx = batches.findIndex((b) => b.id === batch.id);
+        if (idx >= 0) {
+          batches[idx].id = res.id;
+          this.set(STORAGE_KEYS.BATCHES, batches);
+          this.notifyListeners();
+          return batches[idx];
+        }
+      }
+      return batch;
+    } catch (err: any) {
+      this.set(STORAGE_KEYS.BATCHES, prevBatches);
+      this.notifyListeners();
+      throw new Error(`Failed to create batch on server: ${err.message || err}`);
+    }
+  }
+
   public deleteBatch(batchId: string): void {
     const batch = this.getBatchById(batchId);
     if (!batch) throw new Error('Batch not found.');
@@ -969,6 +1093,22 @@ class IronStorage {
 
     // Persist to backend D1 / SQLite
     api.batches.delete(batchId).catch((e) => console.warn('Backend batch delete warning:', e));
+  }
+
+  public async deleteBatchAsync(batchId: string): Promise<void> {
+    const prevBatches = [...this.getBatches()];
+    const prevStudents = [...this.getBatchStudents()];
+    const prevEvals = [...this.getEvaluations()];
+    this.deleteBatch(batchId);
+    try {
+      await api.batches.delete(batchId);
+    } catch (err: any) {
+      this.set(STORAGE_KEYS.BATCHES, prevBatches);
+      this.set(STORAGE_KEYS.BATCH_STUDENTS, prevStudents);
+      this.set(STORAGE_KEYS.EVALUATIONS, prevEvals);
+      this.notifyListeners();
+      throw new Error(`Failed to delete batch on server: ${err.message || err}`);
+    }
   }
 
   // --- BATCH STUDENTS ---
@@ -1058,6 +1198,26 @@ class IronStorage {
     return { addedCount: newItems.length, errors };
   }
 
+  public async addStudentsToBatchAsync(
+    batchId: string,
+    roundId: string,
+    studentIds: string[],
+    addedBy: string
+  ): Promise<{ addedCount: number; errors: string[] }> {
+    const prevBatchStudents = [...this.getBatchStudents()];
+    const result = this.addStudentsToBatch(batchId, roundId, studentIds, addedBy);
+    if (result.addedCount > 0) {
+      try {
+        await api.batches.assignStudents(batchId, studentIds);
+      } catch (err: any) {
+        this.set(STORAGE_KEYS.BATCH_STUDENTS, prevBatchStudents);
+        this.notifyListeners();
+        throw new Error(`Server rejection on batch assignment: ${err.message || err}`);
+      }
+    }
+    return result;
+  }
+
   public removeStudentFromBatch(batchId: string, studentId: string): void {
     const batch = this.getBatchById(batchId);
     if (!batch) throw new Error('Batch not found.');
@@ -1075,6 +1235,18 @@ class IronStorage {
     api.batches.removeStudent(batchId, studentId).catch((e) =>
       console.warn('Backend removeStudent warning:', e)
     );
+  }
+
+  public async removeStudentFromBatchAsync(batchId: string, studentId: string): Promise<void> {
+    const prevBatchStudents = [...this.getBatchStudents()];
+    this.removeStudentFromBatch(batchId, studentId);
+    try {
+      await api.batches.removeStudent(batchId, studentId);
+    } catch (err: any) {
+      this.set(STORAGE_KEYS.BATCH_STUDENTS, prevBatchStudents);
+      this.notifyListeners();
+      throw new Error(`Server rejection removing student: ${err.message || err}`);
+    }
   }
 
   // --- HR EVALUATIONS & BATCH SUBMISSION ---

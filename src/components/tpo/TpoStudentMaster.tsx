@@ -157,7 +157,7 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
     setIsEditOpen(true);
   };
 
-  const handleSaveStudent = (e: React.FormEvent) => {
+  const handleSaveStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
 
@@ -168,23 +168,27 @@ export const TpoStudentMaster: React.FC<TpoStudentMasterProps> = ({ onRefresh })
 
     try {
       if (editingStudent) {
-        ironStorage.saveStudent(formData as any, editingStudent.id);
+        await ironStorage.saveStudentAsync(formData as any, editingStudent.id);
         setIsEditOpen(false);
       } else {
-        ironStorage.saveStudent(formData as any);
+        await ironStorage.saveStudentAsync(formData as any);
         setIsAddOpen(false);
       }
       onRefresh();
     } catch (err: any) {
-      setFormError(err.message || 'Error saving student record.');
+      setFormError(err.message || 'Error saving student record on server.');
     }
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (!deleteCandidate) return;
-    ironStorage.deleteStudent(deleteCandidate.id);
-    setDeleteCandidate(null);
-    onRefresh();
+    try {
+      await ironStorage.deleteStudentAsync(deleteCandidate.id);
+      setDeleteCandidate(null);
+      onRefresh();
+    } catch (err: any) {
+      setFormError(err.message || 'Error deleting student record on server.');
+    }
   };
 
   // CSV Export

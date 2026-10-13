@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Github, ExternalLink } from 'lucide-react';
 import { User, Drive } from './types';
 import { ironStorage } from './services/storage';
+import { api } from './services/api';
 import { Header } from './components/layout/Header';
 import iconSrc from './icon.svg';
 import { LoginModal } from './components/auth/LoginModal';
@@ -55,10 +56,19 @@ export default function App() {
     // Initial sync on mount
     ironStorage.syncWithBackend().catch(() => {});
 
-    // Periodic background sync interval for live multi-user collaboration (HR <-> Coordinator <-> TPO)
+    // Periodic background sync interval (25s) with conditional 304 ETag caching
     const syncInterval = setInterval(() => {
       ironStorage.syncWithBackend().catch(() => {});
-    }, 4000);
+    }, 25000);
+
+    // Fast sync upon tab visibility or window focus
+    const handleFocusOrVisible = () => {
+      if (document.visibilityState === 'visible') {
+        ironStorage.syncWithBackend().catch(() => {});
+      }
+    };
+    window.addEventListener('focus', handleFocusOrVisible);
+    document.addEventListener('visibilitychange', handleFocusOrVisible);
 
     // Subscribe to state updates when mutations occur
     const unsubscribe = ironStorage.subscribe(() => {
@@ -67,6 +77,8 @@ export default function App() {
 
     return () => {
       clearInterval(syncInterval);
+      window.removeEventListener('focus', handleFocusOrVisible);
+      document.removeEventListener('visibilitychange', handleFocusOrVisible);
       unsubscribe();
     };
   }, []);
@@ -84,8 +96,11 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    // M7 Fix: Purge session token and user identity completely
+    api.auth.logout();
     setCurrentUser(null);
     sessionStorage.removeItem('iron_active_user');
+    sessionStorage.removeItem('iron_auth_token');
     setCurrentView('public-drives');
   };
 

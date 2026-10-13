@@ -214,7 +214,7 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
     }
   };
 
-  const handleCreateBatch = (e: React.FormEvent) => {
+  const handleCreateBatch = async (e: React.FormEvent) => {
     e.preventDefault();
     setBatchError(null);
 
@@ -230,12 +230,12 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
 
     if (!assignedDrive) return;
     try {
-      const newB = ironStorage.createBatch(
+      const newB = await ironStorage.createBatchAsync(
         selectedRoundId,
         assignedDrive.id,
         batchName,
         capacityType,
-        capacityType === 'LIMITED' ? capacity : null,
+        capacityType === 'LIMITED' ? capacity : undefined,
         currentUser.username
       );
       setIsCreateBatchOpen(false);
@@ -243,14 +243,14 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
       setActiveBatchId(newB.id);
       onRefresh();
     } catch (err: any) {
-      setBatchError(err.message || 'Error creating batch.');
+      setBatchError(err.message || 'Error creating batch on server.');
     }
   };
 
   const handleDeleteBatch = async () => {
     if (!deleteBatchCandidate) return;
     try {
-      ironStorage.deleteBatch(deleteBatchCandidate.id);
+      await ironStorage.deleteBatchAsync(deleteBatchCandidate.id);
       setDeleteBatchCandidate(null);
       if (activeBatchId === deleteBatchCandidate.id) {
         const remaining = batches.filter((b) => b.id !== deleteBatchCandidate.id);
@@ -352,7 +352,7 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
     }
   };
 
-  const handleConfirmAssignment = () => {
+  const handleConfirmAssignment = async () => {
     if (!activeBatch) return;
     setAssignError(null);
 
@@ -363,7 +363,7 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
     }
 
     try {
-      const res = ironStorage.addStudentsToBatch(
+      const res = await ironStorage.addStudentsToBatchAsync(
         activeBatch.id,
         selectedRoundId,
         ids,
@@ -388,13 +388,13 @@ export const CoordinatorView: React.FC<CoordinatorViewProps> = ({
     }
   };
 
-  const handleRemoveStudent = (studentId: string) => {
+  const handleRemoveStudent = async (studentId: string) => {
     if (!activeBatch) return;
     try {
-      ironStorage.removeStudentFromBatch(activeBatch.id, studentId);
+      await ironStorage.removeStudentFromBatchAsync(activeBatch.id, studentId);
       onRefresh();
     } catch (err: any) {
-      alert(err.message);
+      alert(err.message || 'Failed to remove student from batch.');
     }
   };
 

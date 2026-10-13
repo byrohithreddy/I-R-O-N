@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS drives (
     job_description TEXT,
     eligibility_criteria TEXT,
     minimum_cgpa REAL NOT NULL DEFAULT 7.0,
-    backlog_rule INTEGER NOT NULL DEFAULT 0,
+    backlog_rule TEXT NOT NULL DEFAULT '0',
     eligible_branches TEXT NOT NULL, -- JSON array of strings e.g. ["CSE","IT"]
     drive_date TEXT NOT NULL, -- YYYY-MM-DD
     drive_time TEXT NOT NULL DEFAULT '09:00',

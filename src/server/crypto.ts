@@ -3,7 +3,13 @@
 
 const ITERATIONS = 100000;
 const HASH_ALGO = 'SHA-256';
-const JWT_SECRET_STRING = process.env.JWT_SECRET || 'iron_campus_recruitment_jwt_secret_key_2026';
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('FATAL: JWT_SECRET environment variable is missing. Authentication disabled for safety.');
+  }
+  return secret;
+}
 
 function toHex(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -106,7 +112,7 @@ export async function signJwt(payload: Omit<JwtPayload, 'iat' | 'exp'>, expiresI
   const encodedPayload = base64UrlEncode(JSON.stringify(fullPayload));
   const dataToSign = `${encodedHeader}.${encodedPayload}`;
 
-  const key = await getHmacKey(JWT_SECRET_STRING);
+  const key = await getHmacKey(getJwtSecret());
   const signatureBuffer = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(dataToSign));
   const signatureB64 = Buffer.from(signatureBuffer).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
@@ -121,7 +127,7 @@ export async function verifyJwt(token: string): Promise<JwtPayload | null> {
     const [encodedHeader, encodedPayload, signature] = parts;
     const dataToVerify = `${encodedHeader}.${encodedPayload}`;
 
-    const key = await getHmacKey(JWT_SECRET_STRING);
+    const key = await getHmacKey(getJwtSecret());
     let sigB64 = signature.replace(/-/g, '+').replace(/_/g, '/');
     while (sigB64.length % 4) sigB64 += '=';
     const sigBytes = Buffer.from(sigB64, 'base64');

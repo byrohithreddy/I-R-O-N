@@ -53,11 +53,13 @@ export async function runConcurrencyTest(
 
   // 2. Fetch existing students from Student Master DB
   console.log(`Fetching 1,000 real students from Master DB...`);
-  const studentsRes = await fetch(`${apiBaseUrl}/students?limit=${concurrencyCount}`);
+  const studentsRes = await fetch(`${apiBaseUrl}/students?limit=${concurrencyCount}`, {
+    headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+  });
   let testStudents = await studentsRes.json();
 
   if (!Array.isArray(testStudents) || testStudents.length < concurrencyCount) {
-    console.log(`Master DB has ${testStudents?.length || 0} students. Generating remaining up to ${concurrencyCount}...`);
+    console.log(`Master DB has ${Array.isArray(testStudents) ? testStudents.length : 0} students. Generating remaining up to ${concurrencyCount}...`);
     const newStudents = [];
     const currentLen = Array.isArray(testStudents) ? testStudents.length : 0;
     for (let i = currentLen + 1; i <= concurrencyCount; i++) {
@@ -88,7 +90,9 @@ export async function runConcurrencyTest(
       console.log(`Imported ${bulkData.inserted || newStudents.length} students into Master DB.`);
     }
 
-    const refetched = await fetch(`${apiBaseUrl}/students?limit=${concurrencyCount}`);
+    const refetched = await fetch(`${apiBaseUrl}/students?limit=${concurrencyCount}`, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+    });
     testStudents = await refetched.json();
   }
 
@@ -212,7 +216,9 @@ export async function runConcurrencyTest(
   console.log(`======================================================\n`);
 
   // 4. Verify Database Integrity via Applications & Candidates count
-  const verifyAppsRes = await fetch(`${apiBaseUrl}/applications/drive/${targetDrive.id}`);
+  const verifyAppsRes = await fetch(`${apiBaseUrl}/applications/drive/${targetDrive.id}`, {
+    headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+  });
   const recordedApps = await verifyAppsRes.json();
 
   console.log(`Database Integrity Audit:`);
