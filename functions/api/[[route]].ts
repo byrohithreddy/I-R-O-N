@@ -177,27 +177,13 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const isTpo = currentUser?.role === 'TPO';
       const isStaff = Boolean(currentUser && ['TPO', 'COORDINATOR', 'HR'].includes(currentUser.role));
 
-      // Fast version probe for ETag calculation (M1 optimization)
-      const probeQuery = isStaff
-        ? `SELECT 
-             (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '') FROM drives) as d_v,
-             (SELECT COUNT(*) FROM rounds) as r_v,
-             (SELECT COUNT(*) FROM placements) as p_v,
-             (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '') FROM students) as s_v,
-             (SELECT COUNT(*) FROM applications) as a_v,
-             (SELECT COUNT(*) FROM round_candidates) as c_v,
-             (SELECT COUNT(*) || ':' || COALESCE(MAX(submitted_at), '') FROM batches) as b_v,
-             (SELECT COUNT(*) FROM batch_students) as bs_v,
-             (SELECT COUNT(*) FROM evaluations) as e_v,
-             (SELECT COUNT(*) FROM round_results) as rr_v`
-        : `SELECT 
-             (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '') FROM drives WHERE status != 'DRAFT') as d_v,
-             (SELECT COUNT(*) FROM rounds) as r_v,
-             (SELECT COUNT(*) FROM placements) as p_v`;
-
-      const probe = await env.DB.prepare(probeQuery).first<any>();
-      const probeStr = probe ? Object.values(probe).join('|') : '';
-      const etag = `W/"sync_${isStaff ? 'staff' : 'pub'}_${isTpo ? 'tpo' : 'notpo'}_${probeStr}"`;
+      // Every insert/update/delete to a sync-visible table increments this revision via D1 triggers.
+      // Unlike row counts or second-resolution timestamps, it detects in-place edits reliably.
+      const probe = await env.DB.prepare('SELECT revision FROM sync_revision WHERE id = 1').first<any>();
+      if (!probe) {
+        return jsonResponse({ error: 'Sync revision is not initialized. Apply migration 0003_sync_revision.sql.' }, 500);
+      }
+      const etag = `W/"sync_${isStaff ? 'staff' : 'pub'}_${isTpo ? 'tpo' : 'notpo'}_${probe.revision}"`;
 
       const ifNoneMatch = request.headers.get('If-None-Match');
       if (ifNoneMatch && ifNoneMatch === etag) {
@@ -1742,6 +1728,15 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
         const resultId = `rr_${round?.id || 'rnd'}_${studentId}`;
         const outcome = action === 'SELECT' ? 'SELECTED' : action === 'HOLD' && !isFinal ? 'HOLD' : 'REJECTED';
+
+        // Keep application status in the same atomic transaction as the finalized round outcome.
+        const applicationStatus = isFinal
+          ? (action === 'SELECT' ? 'PLACED' : 'REJECTED')
+          : (action === 'SELECT' || (action === 'HOLD' && !isFinal) ? 'ACTIVE' : 'REJECTED');
+        atomicBatchStatements.push(
+          env.DB.prepare('UPDATE applications SET status = ? WHERE drive_id = ? AND student_id = ?')
+            .bind(applicationStatus, batch.drive_id, studentId)
+        );
 
         atomicBatchStatements.push(
           env.DB.prepare(
