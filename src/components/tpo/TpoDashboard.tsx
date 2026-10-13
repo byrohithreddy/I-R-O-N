@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Drive, Placement } from '../../types';
 import { ironStorage } from '../../services/storage';
+import { getCalendarDayDifference, getIstCalendarDate } from '../../utils/date';
 import { StatusBadge } from '../common/StatusBadge';
 import { Modal } from '../common/Modal';
 import { Users, Briefcase, Award, CheckCircle2, AlertTriangle, ArrowRight, Plus, Key, Copy, Check } from 'lucide-react';
@@ -43,11 +44,10 @@ export const TpoDashboard: React.FC<TpoDashboardProps> = ({
   const placementRate = studentCount > 0 ? ((totalPlaced / studentCount) * 100).toFixed(1) : '0';
 
   // Check drives approaching 6-month data expiry
-  const now = new Date();
+  const todayIst = getIstCalendarDate();
   const expiringDrives = drives.filter((d) => {
-    const expiry = new Date(d.retentionExpiresAt);
-    const diffDays = Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    return diffDays <= 30; // within 30 days or overdue
+    const diffDays = getCalendarDayDifference(todayIst, d.retentionExpiresAt.split('T')[0]);
+    return diffDays <= 30; // within 30 calendar days or overdue
   });
 
   return (
