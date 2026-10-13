@@ -16,7 +16,7 @@ import {
 } from '../types';
 import JSZip from 'jszip';
 import { api } from './api';
-import { addCalendarMonths, calculateIstApplicationDeadline, getIstCalendarDate } from '../utils/date';
+import { addCalendarMonths, calculateIstApplicationDeadline, formatIstTimestamp, getIstCalendarDate } from '../utils/date';
 
 const STORAGE_KEYS = {
   USERS: 'iron_users_v1',
@@ -1820,7 +1820,7 @@ Retained as permanent backup in accordance with IRON 6-Month Data Retention Poli
     const appsHeaders = ['Roll Number,Student Name,Branch,CGPA,Backlogs,Applied At,Eligibility Status,Final Status'];
     const appRows = applications.map((a) => {
       const s = studentMap.get(a.studentId);
-      return `"${s?.rollNumber || ''}","${s?.fullName || ''}","${s?.branch || ''}",${s?.cgpa || ''},${s?.backlogCount || 0},"${a.appliedAt}","${a.eligibilityStatus}","${a.status}"`;
+      return `"${s?.rollNumber || ''}","${s?.fullName || ''}","${s?.branch || ''}",${s?.cgpa || ''},${s?.backlogCount || 0},"${formatIstTimestamp(a.appliedAt)}","${a.eligibilityStatus}","${a.status}"`;
     });
     zip.file('applications.csv', [appsHeaders, ...appRows].join('\n'));
 
@@ -1828,7 +1828,7 @@ Retained as permanent backup in accordance with IRON 6-Month Data Retention Poli
     const placedHeaders = ['Roll Number,Student Name,Branch,Department,Company,Role,Package,Selected At'];
     const placedRows = placements.map((p) => {
       const s = studentMap.get(p.studentId);
-      return `"${s?.rollNumber || ''}","${s?.fullName || ''}","${s?.branch || ''}","${s?.department || ''}","${p.companyName}","${p.jobRole}","${p.package}","${p.selectedAt}"`;
+      return `"${s?.rollNumber || ''}","${s?.fullName || ''}","${s?.branch || ''}","${s?.department || ''}","${p.companyName}","${p.jobRole}","${p.package}","${formatIstTimestamp(p.selectedAt)}"`;
     });
     zip.file('final_placed_students.csv', [placedHeaders, ...placedRows].join('\n'));
 
