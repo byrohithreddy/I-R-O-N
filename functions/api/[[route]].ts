@@ -1621,6 +1621,62 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       return jsonResponse(mapped);
     }
 
+    // Bulk save in-flight HR decisions in one D1 batch.
+    if (path === '/api/evaluations/bulk' && method === 'POST') {
+      const auth = await requireAuth(['HR', 'TPO']);
+      if (auth.error) return auth.error;
+      const user = auth.user;
+      const body = (await request.json()) as any;
+      const batchId = String(body?.batchId || '');
+      const decisions = Array.isArray(body?.decisions) ? body.decisions : [];
+      if (!batchId || decisions.length === 0 || decisions.length > 500) {
+        return jsonResponse({ error: 'batchId and 1–500 decisions are required' }, 400);
+      }
+
+      const batch = await env.DB.prepare('SELECT * FROM batches WHERE id = ?').bind(batchId).first<any>();
+      if (!batch) return jsonResponse({ error: 'Batch not found' }, 404);
+      if (user.role !== 'TPO' && user.driveId && user.driveId !== batch.drive_id) {
+        return jsonResponse({ error: 'Forbidden: Cross-drive operations are prohibited' }, 403);
+      }
+      const round = await env.DB.prepare('SELECT * FROM rounds WHERE id = ?').bind(batch.round_id).first<any>();
+      if (!round) return jsonResponse({ error: 'Round not found' }, 404);
+
+      const latestByStudent = new Map<string, 'SELECT' | 'HOLD' | 'NONE'>();
+      for (const item of decisions) {
+        const studentId = String(item?.studentId || '');
+        const action = item?.action;
+        if (!studentId || !['SELECT', 'HOLD', 'NONE'].includes(action)) {
+          return jsonResponse({ error: 'Each decision requires a studentId and SELECT, HOLD, or NONE action' }, 400);
+        }
+        if (round.is_final_round && action === 'HOLD') {
+          return jsonResponse({ error: 'HOLD is not permitted in the Final Round' }, 400);
+        }
+        latestByStudent.set(studentId, action);
+      }
+
+      const studentIds = Array.from(latestByStudent.keys());
+      const membershipStatements = studentIds.map((studentId) =>
+        env.DB.prepare('SELECT id FROM batch_students WHERE batch_id = ? AND student_id = ?').bind(batchId, studentId)
+      );
+      const memberships = await Promise.all(membershipStatements.map((statement) => statement.first<any>()));
+      if (memberships.some((membership) => !membership)) {
+        return jsonResponse({ error: 'Every student must belong to the specified batch' }, 400);
+      }
+
+      const statements = Array.from(latestByStudent.entries()).map(([studentId, action]) => {
+        if (action === 'NONE') {
+          return env.DB.prepare('DELETE FROM evaluations WHERE batch_id = ? AND student_id = ?')
+            .bind(batchId, studentId);
+        }
+        return env.DB.prepare(
+          `INSERT OR REPLACE INTO evaluations (id, batch_id, round_id, student_id, action, notes, evaluated_at, evaluated_by)
+           VALUES (?, ?, ?, ?, ?, '', datetime('now'), ?)`
+        ).bind(`eval_${batchId}_${studentId}`, batchId, batch.round_id, studentId, action, user?.username || 'HR');
+      });
+      await env.DB.batch(statements);
+      return jsonResponse({ success: true, savedCount: latestByStudent.size });
+    }
+
     // Set Evaluation: POST /api/evaluations
     if (path === '/api/evaluations' && method === 'POST') {
       const auth = await requireAuth(['HR', 'TPO']);
