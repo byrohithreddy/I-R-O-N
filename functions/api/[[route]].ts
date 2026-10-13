@@ -179,11 +179,16 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       // Every insert/update/delete to a sync-visible table increments this revision via D1 triggers.
       // Unlike row counts or second-resolution timestamps, it detects in-place edits reliably.
-      const probe = await env.DB.prepare('SELECT revision FROM sync_revision WHERE id = 1').first<any>();
-      if (!probe) {
-        return jsonResponse({ error: 'Sync revision is not initialized. Apply migration 0003_sync_revision.sql.' }, 500);
+      let revision: number | undefined;
+      try {
+        const probe = await env.DB.prepare('SELECT revision FROM sync_revision WHERE id = 1').first<any>();
+        if (probe) revision = Number(probe.revision);
+      } catch {
+        // Backward-compatible rollout: until migration 0003 is applied, disable 304 responses.
       }
-      const etag = `W/"sync_${isStaff ? 'staff' : 'pub'}_${isTpo ? 'tpo' : 'notpo'}_${probe.revision}"`;
+      const etag = Number.isFinite(revision)
+        ? `W/"sync_${isStaff ? 'staff' : 'pub'}_${isTpo ? 'tpo' : 'notpo'}_${revision}"`
+        : `W/"sync_uncached_${isStaff ? 'staff' : 'pub'}_${Date.now()}"`;
 
       const ifNoneMatch = request.headers.get('If-None-Match');
       if (ifNoneMatch && ifNoneMatch === etag) {
