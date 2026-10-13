@@ -16,7 +16,7 @@ import {
 } from '../types';
 import JSZip from 'jszip';
 import { api } from './api';
-import { calculateIstApplicationDeadline } from '../utils/date';
+import { addCalendarMonths, calculateIstApplicationDeadline, getIstCalendarDate } from '../utils/date';
 
 const STORAGE_KEYS = {
   USERS: 'iron_users_v1',
@@ -497,15 +497,13 @@ class IronStorage {
     const drives = this.getDrives();
     const now = new Date().toISOString();
 
-    // Calculate deadline as driveDate 00:00:00 (Rule 10 & 13)
-    const driveDate = driveData.driveDate || new Date().toISOString().split('T')[0];
+    // Keep calendar dates in IST and preserve the existing date on partial updates.
+    const existingDrive = id ? drives.find((drive) => drive.id === id) : undefined;
+    const driveDate = driveData.driveDate || existingDrive?.driveDate || getIstCalendarDate();
     const applicationDeadline = calculateIstApplicationDeadline(driveDate);
 
-    // Retention expires 6 months after drive date (Rule 30)
-    const driveDateObj = new Date(driveDate);
-    const retentionDate = new Date(driveDateObj);
-    retentionDate.setMonth(retentionDate.getMonth() + 6);
-    const retentionExpiresAt = retentionDate.toISOString();
+    // Retention expiry is a calendar date: clamp month-end dates instead of rolling over.
+    const retentionExpiresAt = addCalendarMonths(driveDate, 6);
 
     if (id) {
       const idx = drives.findIndex((d) => d.id === id);
