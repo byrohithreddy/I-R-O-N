@@ -3,6 +3,7 @@ import { Drive } from '../../types';
 import { ironStorage } from '../../services/storage';
 import { StatusBadge } from '../common/StatusBadge';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import { getCalendarDayDifference, getIstCalendarDate } from '../../utils/date';
 import { Modal } from '../common/Modal';
 import {
   Archive,
@@ -21,7 +22,6 @@ interface TpoDataExpiryProps {
 
 export const TpoDataExpiry: React.FC<TpoDataExpiryProps> = ({ onRefresh }) => {
   const drives = ironStorage.getDrives();
-  const now = new Date();
 
   const [downloadedDrives, setDownloadedDrives] = useState<Set<string>>(new Set());
   const [isGenerating, setIsGenerating] = useState<string | null>(null);
@@ -113,9 +113,7 @@ export const TpoDataExpiry: React.FC<TpoDataExpiryProps> = ({ onRefresh }) => {
           </thead>
           <tbody className="divide-y divide-zinc-200">
             {drives.map((d) => {
-              const expiry = new Date(d.retentionExpiresAt);
-              const diffMs = expiry.getTime() - now.getTime();
-              const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+              const diffDays = getCalendarDayDifference(getIstCalendarDate(), d.retentionExpiresAt.split('T')[0]);
               const isExpired = diffDays <= 0;
               const isWarning = diffDays > 0 && diffDays <= 30;
               const isDownloaded = downloadedDrives.has(d.id);
