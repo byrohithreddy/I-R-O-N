@@ -186,3 +186,21 @@ BEGIN
   UPDATE sync_revision SET revision = revision + 1 WHERE id = 1;
 END;
 
+
+CREATE TRIGGER IF NOT EXISTS sync_revision_drive_credentials_insert
+AFTER INSERT ON drive_credentials
+BEGIN
+  UPDATE sync_revision SET revision = revision + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS sync_revision_drive_credentials_update
+AFTER UPDATE ON drive_credentials
+BEGIN
+  UPDATE sync_revision SET revision = revision + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS sync_revision_drive_credentials_delete
+AFTER DELETE ON drive_credentials
+BEGIN
+  UPDATE sync_revision SET revision = revision + 1 WHERE id = 1;
+END;
