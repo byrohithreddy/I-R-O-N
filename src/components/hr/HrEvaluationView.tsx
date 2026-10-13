@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { User, Drive, DriveRound, Batch, BatchStudent, Student, Evaluation } from '../../types';
 import { ironStorage } from '../../services/storage';
+import { formatIstTimestamp } from '../../utils/date';
 import { StatusBadge } from '../common/StatusBadge';
 import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
@@ -463,7 +464,7 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
                 <div className="flex items-center gap-2">
                   <Lock className="w-4 h-4 text-zinc-600 shrink-0" />
                   <span>
-                    <strong>Locked & Submitted:</strong> Submitted on {selectedBatch.submittedAt ? new Date(selectedBatch.submittedAt).toLocaleString() : 'N/A'}. Coordinators can only view results. You may click <strong>"Edit Evaluation"</strong> above if changes are required.
+                    <strong>Locked & Submitted:</strong> Submitted on {selectedBatch.submittedAt ? formatIstTimestamp(selectedBatch.submittedAt) : 'N/A'}. Coordinators can only view results. You may click <strong>"Edit Evaluation"</strong> above if changes are required.
                   </span>
                 </div>
               </div>
