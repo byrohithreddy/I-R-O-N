@@ -204,7 +204,7 @@ export const api = {
       return request<Batch[]>(`/batches/round/${roundId}`);
     },
 
-    async create(payload: { roundId: string; driveId: string; batchName: string; capacityType: string; capacity: number | null }): Promise<Batch> {
+    async create(payload: { id?: string; roundId: string; driveId: string; batchName: string; capacityType: string; capacity: number | null; status?: string }): Promise<Batch> {
       return request<Batch>('/batches', {
         method: 'POST',
         body: JSON.stringify(payload),

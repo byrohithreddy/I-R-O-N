@@ -1575,7 +1575,7 @@ apiRouter.get('/batches/round/:roundId', authMiddleware, roleMiddleware(['TPO', 
 apiRouter.post('/batches', authMiddleware, roleMiddleware(['COORDINATOR', 'TPO']), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = getDatabase();
-    const { roundId, driveId, batchName, capacityType, capacity } = req.body;
+    const { roundId, driveId, batchName, capacityType, capacity, id, status } = req.body;
 
     if (!roundId || !batchName) {
       return res.status(400).json({ error: 'Round ID and Batch Name are required' });
@@ -1588,24 +1588,50 @@ apiRouter.post('/batches', authMiddleware, roleMiddleware(['COORDINATOR', 'TPO']
     }
     const actualDriveId = round.drive_id || driveId;
 
-    const batchId = `btch_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    await db
-      .prepare(
-        `INSERT INTO batches (id, round_id, drive_id, batch_name, capacity_type, capacity, status, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, datetime('now'))`
-      )
-      .bind(
-        batchId,
-        roundId,
-        actualDriveId,
-        batchName,
-        capacityType || 'LIMITED',
-        capacityType === 'LIMITED' ? Number(capacity) || 30 : null,
-        req.user?.username || 'Coordinator'
-      )
-      .run();
+    const batchId = id || `btch_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    let targetStatus = (status === 'DRAFT' || status === 'ACTIVE' || status === 'OPEN') ? status : 'OPEN';
 
-    res.status(201).json({ id: batchId, roundId, driveId: actualDriveId, batchName, capacityType, capacity, status: 'OPEN' });
+    try {
+      await db
+        .prepare(
+          `INSERT INTO batches (id, round_id, drive_id, batch_name, capacity_type, capacity, status, created_by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+        )
+        .bind(
+          batchId,
+          roundId,
+          actualDriveId,
+          batchName,
+          capacityType || 'LIMITED',
+          capacityType === 'LIMITED' ? Number(capacity) || 30 : null,
+          targetStatus,
+          req.user?.username || 'Coordinator'
+        )
+        .run();
+    } catch (insertErr: any) {
+      if (insertErr?.message?.includes('CHECK constraint failed') && targetStatus === 'OPEN') {
+        targetStatus = 'ACTIVE';
+        await db
+          .prepare(
+            `INSERT INTO batches (id, round_id, drive_id, batch_name, capacity_type, capacity, status, created_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, datetime('now'))`
+          )
+          .bind(
+            batchId,
+            roundId,
+            actualDriveId,
+            batchName,
+            capacityType || 'LIMITED',
+            capacityType === 'LIMITED' ? Number(capacity) || 30 : null,
+            req.user?.username || 'Coordinator'
+          )
+          .run();
+      } else {
+        throw insertErr;
+      }
+    }
+
+    res.status(201).json({ id: batchId, roundId, driveId: actualDriveId, batchName, capacityType, capacity, status: targetStatus });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1626,6 +1652,7 @@ apiRouter.delete('/batches/:id', authMiddleware, roleMiddleware(['COORDINATOR', 
 
     await db.prepare('DELETE FROM batch_students WHERE batch_id = ?').bind(req.params.id).run();
     await db.prepare('DELETE FROM evaluations WHERE batch_id = ?').bind(req.params.id).run();
+    await db.prepare('DELETE FROM round_results WHERE batch_id = ?').bind(req.params.id).run();
     await db.prepare('DELETE FROM batches WHERE id = ?').bind(req.params.id).run();
     res.json({ success: true });
   } catch (err: any) {
@@ -1850,6 +1877,11 @@ apiRouter.post('/evaluations', authMiddleware, roleMiddleware(['HR', 'TPO']), as
     // Rule 22: HOLD is disabled in Final Round
     if (round?.is_final_round && action === 'HOLD') {
       return res.status(400).json({ error: 'Rule 22: HOLD is not permitted in the Final Round' });
+    }
+
+    if (!action || action === 'NONE') {
+      await db.prepare('DELETE FROM evaluations WHERE batch_id = ? AND student_id = ?').bind(batchId, studentId).run();
+      return res.json({ success: true, action: 'NONE' });
     }
 
     await db

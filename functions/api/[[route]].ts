@@ -1428,7 +1428,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const auth = await requireAuth(['COORDINATOR', 'TPO']);
       if (auth.error) return auth.error;
       const user = auth.user;
-      const { roundId, driveId, batchName, capacityType, capacity, id } = (await request.json()) as any;
+      const { roundId, driveId, batchName, capacityType, capacity, id, status } = (await request.json()) as any;
       if (!roundId || !batchName) return jsonResponse({ error: 'Round ID and Batch Name are required' }, 400);
 
       const round = await env.DB.prepare('SELECT drive_id FROM rounds WHERE id = ?').bind(roundId).first<any>();
@@ -1439,22 +1439,48 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const actualDriveId = round.drive_id || driveId;
 
       const batchId = id || `btch_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-      await env.DB.prepare(
-        `INSERT INTO batches (id, round_id, drive_id, batch_name, capacity_type, capacity, status, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, datetime('now'))`
-      )
-        .bind(
-          batchId,
-          roundId,
-          actualDriveId,
-          batchName,
-          capacityType || 'LIMITED',
-          capacityType === 'LIMITED' ? Number(capacity) || 30 : null,
-          user?.username || 'Coordinator'
-        )
-        .run();
+      let targetStatus = (status === 'DRAFT' || status === 'ACTIVE' || status === 'OPEN') ? status : 'OPEN';
 
-      return jsonResponse({ id: batchId, roundId, driveId: actualDriveId, batchName, capacityType, capacity, status: 'OPEN' }, 201);
+      try {
+        await env.DB.prepare(
+          `INSERT INTO batches (id, round_id, drive_id, batch_name, capacity_type, capacity, status, created_by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+        )
+          .bind(
+            batchId,
+            roundId,
+            actualDriveId,
+            batchName,
+            capacityType || 'LIMITED',
+            capacityType === 'LIMITED' ? Number(capacity) || 30 : null,
+            targetStatus,
+            user?.username || 'Coordinator'
+          )
+          .run();
+      } catch (insertErr: any) {
+        // Safe backward compatibility fallback if database has older CHECK constraint ('DRAFT', 'ACTIVE', 'SUBMITTED')
+        if (insertErr?.message?.includes('CHECK constraint failed') && targetStatus === 'OPEN') {
+          targetStatus = 'ACTIVE';
+          await env.DB.prepare(
+            `INSERT INTO batches (id, round_id, drive_id, batch_name, capacity_type, capacity, status, created_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, datetime('now'))`
+          )
+            .bind(
+              batchId,
+              roundId,
+              actualDriveId,
+              batchName,
+              capacityType || 'LIMITED',
+              capacityType === 'LIMITED' ? Number(capacity) || 30 : null,
+              user?.username || 'Coordinator'
+            )
+            .run();
+        } else {
+          throw insertErr;
+        }
+      }
+
+      return jsonResponse({ id: batchId, roundId, driveId: actualDriveId, batchName, capacityType, capacity, status: targetStatus }, 201);
     }
 
     // Delete Batch: DELETE /api/batches/:id
@@ -1475,6 +1501,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       await env.DB.prepare('DELETE FROM batches WHERE id = ?').bind(batchId).run();
       await env.DB.prepare('DELETE FROM batch_students WHERE batch_id = ?').bind(batchId).run();
       await env.DB.prepare('DELETE FROM evaluations WHERE batch_id = ?').bind(batchId).run();
+      await env.DB.prepare('DELETE FROM round_results WHERE batch_id = ?').bind(batchId).run();
       return jsonResponse({ success: true });
     }
 
@@ -1637,6 +1664,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const round = await env.DB.prepare('SELECT * FROM rounds WHERE id = ?').bind(effectiveRoundId).first<any>();
       if (round?.is_final_round && action === 'HOLD') {
         return jsonResponse({ error: 'HOLD is not permitted in the Final Round' }, 400);
+      }
+
+      if (!action || action === 'NONE') {
+        await env.DB.prepare('DELETE FROM evaluations WHERE batch_id = ? AND student_id = ?').bind(batchId, studentId).run();
+        return jsonResponse({ success: true, action: 'NONE' });
       }
 
       const evalId = `eval_${batchId}_${studentId}`;

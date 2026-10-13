@@ -1000,7 +1000,8 @@ class IronStorage {
     batchName: string,
     capacityType: 'LIMITED' | 'UNLIMITED',
     capacity: number | null,
-    createdBy: string
+    createdBy: string,
+    persistRemote: boolean = true
   ): Batch {
     if (capacityType === 'LIMITED' && (!capacity || capacity <= 0)) {
       throw new Error('Limited batches must have a capacity greater than 0.');
@@ -1023,14 +1024,18 @@ class IronStorage {
     this.set(STORAGE_KEYS.BATCHES, batches);
     this.notifyListeners();
 
-    // Persist to backend D1 / SQLite
-    api.batches.create({
-      roundId,
-      driveId,
-      batchName: newBatch.batchName,
-      capacityType,
-      capacity: newBatch.capacity,
-    }).catch((e) => console.warn('Backend batch create warning:', e));
+    if (persistRemote) {
+      // Persist to backend D1 / SQLite
+      api.batches.create({
+        id: newBatch.id,
+        roundId,
+        driveId,
+        batchName: newBatch.batchName,
+        capacityType,
+        capacity: newBatch.capacity,
+        status: newBatch.status,
+      }).catch((e) => console.warn('Backend batch create warning:', e));
+    }
 
     return newBatch;
   }
@@ -1044,20 +1049,23 @@ class IronStorage {
     createdBy: string = 'Coordinator'
   ): Promise<Batch> {
     const prevBatches = [...this.getBatches()];
-    const batch = this.createBatch(roundId, driveId, batchName, capacityType, capacity ?? null, createdBy);
+    const batch = this.createBatch(roundId, driveId, batchName, capacityType, capacity ?? null, createdBy, false);
     try {
       const res = await api.batches.create({
+        id: batch.id,
         roundId,
         driveId,
         batchName: batch.batchName,
         capacityType,
         capacity: batch.capacity,
+        status: batch.status,
       });
       if (res && res.id) {
         const batches = this.getBatches();
         const idx = batches.findIndex((b) => b.id === batch.id);
         if (idx >= 0) {
           batches[idx].id = res.id;
+          if (res.status) batches[idx].status = res.status;
           this.set(STORAGE_KEYS.BATCHES, batches);
           this.notifyListeners();
           return batches[idx];
@@ -1071,7 +1079,7 @@ class IronStorage {
     }
   }
 
-  public deleteBatch(batchId: string): void {
+  public deleteBatch(batchId: string, persistRemote: boolean = true): void {
     const batch = this.getBatchById(batchId);
     if (!batch) throw new Error('Batch not found.');
     if (batch.status === 'SUBMITTED') {
@@ -1091,15 +1099,17 @@ class IronStorage {
     this.set(STORAGE_KEYS.BATCHES, batches);
     this.notifyListeners();
 
-    // Persist to backend D1 / SQLite
-    api.batches.delete(batchId).catch((e) => console.warn('Backend batch delete warning:', e));
+    if (persistRemote) {
+      // Persist to backend D1 / SQLite
+      api.batches.delete(batchId).catch((e) => console.warn('Backend batch delete warning:', e));
+    }
   }
 
   public async deleteBatchAsync(batchId: string): Promise<void> {
     const prevBatches = [...this.getBatches()];
     const prevStudents = [...this.getBatchStudents()];
     const prevEvals = [...this.getEvaluations()];
-    this.deleteBatch(batchId);
+    this.deleteBatch(batchId, false);
     try {
       await api.batches.delete(batchId);
     } catch (err: any) {
@@ -1124,7 +1134,8 @@ class IronStorage {
     batchId: string,
     roundId: string,
     studentIds: string[],
-    addedBy: string
+    addedBy: string = 'Coordinator',
+    persistRemote: boolean = true
   ): { addedCount: number; errors: string[] } {
     const batch = this.getBatchById(batchId);
     if (!batch) throw new Error('Batch not found.');
@@ -1189,10 +1200,12 @@ class IronStorage {
       this.set(STORAGE_KEYS.BATCH_STUDENTS, allBatchStudents);
       this.notifyListeners();
 
-      // Persist to backend D1 / SQLite
-      api.batches.assignStudents(batchId, successfullyAddedIds).catch((e) =>
-        console.warn('Backend assignStudents warning:', e)
-      );
+      if (persistRemote) {
+        // Persist to backend D1 / SQLite
+        api.batches.assignStudents(batchId, successfullyAddedIds).catch((e) =>
+          console.warn('Backend assignStudents warning:', e)
+        );
+      }
     }
 
     return { addedCount: newItems.length, errors };
@@ -1205,7 +1218,7 @@ class IronStorage {
     addedBy: string
   ): Promise<{ addedCount: number; errors: string[] }> {
     const prevBatchStudents = [...this.getBatchStudents()];
-    const result = this.addStudentsToBatch(batchId, roundId, studentIds, addedBy);
+    const result = this.addStudentsToBatch(batchId, roundId, studentIds, addedBy, false);
     if (result.addedCount > 0) {
       try {
         await api.batches.assignStudents(batchId, studentIds);
@@ -1218,7 +1231,7 @@ class IronStorage {
     return result;
   }
 
-  public removeStudentFromBatch(batchId: string, studentId: string): void {
+  public removeStudentFromBatch(batchId: string, studentId: string, persistRemote: boolean = true): void {
     const batch = this.getBatchById(batchId);
     if (!batch) throw new Error('Batch not found.');
     if (batch.status === 'SUBMITTED') {
@@ -1231,15 +1244,17 @@ class IronStorage {
     this.set(STORAGE_KEYS.BATCH_STUDENTS, items);
     this.notifyListeners();
 
-    // Persist to backend D1 / SQLite
-    api.batches.removeStudent(batchId, studentId).catch((e) =>
-      console.warn('Backend removeStudent warning:', e)
-    );
+    if (persistRemote) {
+      // Persist to backend D1 / SQLite
+      api.batches.removeStudent(batchId, studentId).catch((e) =>
+        console.warn('Backend removeStudent warning:', e)
+      );
+    }
   }
 
   public async removeStudentFromBatchAsync(batchId: string, studentId: string): Promise<void> {
     const prevBatchStudents = [...this.getBatchStudents()];
-    this.removeStudentFromBatch(batchId, studentId);
+    this.removeStudentFromBatch(batchId, studentId, false);
     try {
       await api.batches.removeStudent(batchId, studentId);
     } catch (err: any) {
@@ -1263,7 +1278,8 @@ class IronStorage {
     batchStudentId: string,
     studentId: string,
     action: 'SELECT' | 'HOLD' | 'NONE',
-    allowSubmittedEdit: boolean = true
+    allowSubmittedEdit: boolean = true,
+    persistRemote: boolean = true
   ): Evaluation {
     const batch = this.getBatchById(batchId);
     if (!batch) throw new Error('Batch not found.');
@@ -1302,13 +1318,15 @@ class IronStorage {
     this.set(STORAGE_KEYS.EVALUATIONS, evals);
     this.notifyListeners();
 
-    // Persist to backend D1 / SQLite
-    api.evaluations.evaluate({
-      batchId,
-      roundId: batch.roundId,
-      studentId,
-      action: action === 'NONE' ? 'REJECT' : action,
-    }).catch((e) => console.warn('Backend evaluate warning:', e));
+    if (persistRemote) {
+      // Persist to backend D1 / SQLite
+      api.evaluations.evaluate({
+        batchId,
+        roundId: batch.roundId,
+        studentId,
+        action: action === 'NONE' ? 'REJECT' : action,
+      }).catch((e) => console.warn('Backend evaluate warning:', e));
+    }
 
     return updated;
   }
@@ -1333,30 +1351,7 @@ class IronStorage {
 
     const evals = this.getEvaluations();
     const prevEvals = JSON.parse(JSON.stringify(evals));
-    const existingIdx = evals.findIndex(
-      (e) => e.batchStudentId === batchStudentId || (e.batchId === batchId && e.studentId === studentId)
-    );
-
-    const now = new Date().toISOString();
-    let updated: Evaluation;
-
-    if (existingIdx !== -1) {
-      updated = { ...evals[existingIdx], action, evaluatedAt: now };
-      evals[existingIdx] = updated;
-    } else {
-      updated = {
-        id: `eval_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
-        batchId,
-        batchStudentId,
-        studentId,
-        action,
-        evaluatedAt: now,
-      };
-      evals.push(updated);
-    }
-
-    this.set(STORAGE_KEYS.EVALUATIONS, evals);
-    this.notifyListeners();
+    const updated = this.saveEvaluation(batchId, batchStudentId, studentId, action, allowSubmittedEdit, false);
 
     try {
       await api.evaluations.evaluate({
