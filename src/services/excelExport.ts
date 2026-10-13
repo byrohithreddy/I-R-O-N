@@ -164,7 +164,7 @@ export function exportSelectedStudentsToExcel({
   XLSX.utils.book_append_sheet(workbook, worksheet, safeSheetName);
 
   const cleanCompanyName = drive.companyName.replace(/[^a-zA-Z0-9_-]/g, '_');
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = getIstCalendarDate();
   const fileName = `${cleanCompanyName}_Selected_Students_${dateStr}.xlsx`;
 
   XLSX.writeFile(workbook, fileName);
@@ -209,7 +209,7 @@ export function exportAllPlacementsToExcel(
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Placed Students');
 
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = getIstCalendarDate();
   const fileName = `Placement_Repository_Students_${dateStr}.xlsx`;
 
   XLSX.writeFile(workbook, fileName);
