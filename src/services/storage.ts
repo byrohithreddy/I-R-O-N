@@ -200,12 +200,23 @@ class IronStorage {
           // Keep in-flight optimistic edits until their own request settles; stale sync snapshots
           // must not erase a decision while another save is still pending.
           const now = Date.now();
-          const pending = new Map(
-            Array.from(this.pendingEvaluationWrites.entries()).filter(([, value]) => now - value.timestamp < 30000)
-          );
-          this.pendingEvaluationWrites = pending;
           const remoteByKey = new Map(data.evaluations.map((e: Evaluation) => [`${e.batchId}:${e.studentId}`, e]));
-          for (const [key, value] of pending) remoteByKey.set(key, value.evaluation);
+          for (const [key, value] of this.pendingEvaluationWrites) {
+            if (now - value.timestamp >= 30000) {
+              this.pendingEvaluationWrites.delete(key);
+              continue;
+            }
+            const remote = remoteByKey.get(key);
+            const serverConfirmed = value.evaluation.action === 'NONE'
+              ? !remote
+              : remote?.action === value.evaluation.action;
+            if (serverConfirmed) {
+              this.pendingEvaluationWrites.delete(key);
+            } else {
+              // Keep optimistic decisions over stale snapshots, even after their write request resolves.
+              remoteByKey.set(key, value.evaluation);
+            }
+          }
           this.set(STORAGE_KEYS.EVALUATIONS, Array.from(remoteByKey.values()));
         }
         if (Array.isArray(data.roundResults)) {
@@ -1379,13 +1390,8 @@ class IronStorage {
       });
       if (!response?.success) throw new Error('The server did not confirm evaluation saves.');
 
-      for (const item of queue.items) {
-        const key = `${batchId}:${item.studentId}`;
-        if (this.pendingEvaluationWrites.get(key)?.evaluation.evaluatedAt === item.updated.evaluatedAt) {
-          this.pendingEvaluationWrites.delete(key);
-        }
-        item.resolve(item.updated);
-      }
+      // Keep optimistic values over any in-flight stale sync until a later sync confirms them.
+      for (const item of queue.items) item.resolve(item.updated);
     } catch (err: any) {
       // Roll back once per student to the state before this debounce group, but only if no newer
       // user action has replaced the latest optimistic value.
