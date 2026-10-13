@@ -222,11 +222,16 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
     const isStaff = Boolean(currentUser && ['TPO', 'COORDINATOR', 'HR'].includes(currentUser.role));
 
     // The migration's triggers increment this revision for every sync-visible table mutation.
-    const probe = await db.prepare('SELECT revision FROM sync_revision WHERE id = 1').first<any>();
-    if (!probe) {
-      return res.status(500).json({ error: 'Sync revision is not initialized. Apply migration 0003_sync_revision.sql.' });
+    let revision: number | undefined;
+    try {
+      const probe = await db.prepare('SELECT revision FROM sync_revision WHERE id = 1').first<any>();
+      if (probe) revision = Number(probe.revision);
+    } catch {
+      // Until migration 0003 is applied, use uncached responses rather than failing synchronization.
     }
-    const etag = `W/"sync_${isStaff ? 'staff' : 'pub'}_${isTpo ? 'tpo' : 'notpo'}_${probe.revision}"`;
+    const etag = Number.isFinite(revision)
+      ? `W/"sync_${isStaff ? 'staff' : 'pub'}_${isTpo ? 'tpo' : 'notpo'}_${revision}"`
+      : `W/"sync_uncached_${isStaff ? 'staff' : 'pub'}_${Date.now()}"`;
 
     const ifNoneMatch = req.headers['if-none-match'];
     if (ifNoneMatch && ifNoneMatch === etag) {
