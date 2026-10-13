@@ -3,6 +3,7 @@ import { Placement, Student, Drive } from '../../types';
 import { ironStorage } from '../../services/storage';
 import { Download, Search, CheckCircle2, Building, Award, FileSpreadsheet } from 'lucide-react';
 import { exportAllPlacementsToExcel } from '../../services/excelExport';
+import { getIstCalendarDate } from '../../utils/date';
 
 interface TpoPlacedStudentsProps {
   onRefresh?: () => void;
@@ -71,7 +72,7 @@ export const TpoPlacedStudents: React.FC<TpoPlacedStudentsProps> = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `Placement_Repository_Students_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `Placement_Repository_Students_${getIstCalendarDate()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
