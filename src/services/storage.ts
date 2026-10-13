@@ -59,6 +59,7 @@ class IronStorage {
   private isSyncing = false;
   private syncListeners: Set<() => void> = new Set();
   private lastSyncFingerprint = '';
+  private pendingEvaluationWrites = new Map<string, { evaluation: Evaluation; timestamp: number }>();
   private memoryCache: Map<string, any> = new Map();
   private studentsCache: Student[] = [];
 
@@ -115,19 +116,29 @@ class IronStorage {
     try {
       const data = await api.sync.getFullState();
       if (data) {
-        // Fast & comprehensive fingerprint to detect any entity changes, additions, or updates
-        const currentFingerprint = JSON.stringify({
-          stSummary: `${data.students?.length}:${data.students?.[0]?.updatedAt || ''}:${data.students?.[data.students.length - 1]?.updatedAt || ''}:${data.students?.[0]?.cgpa || ''}`,
-          drSummary: data.drives?.map((d) => `${d.id}:${d.status}:${d.updatedAt || ''}:${d.applicationDeadline || ''}`).join(','),
-          rdSummary: data.rounds?.map((r) => `${r.id}:${r.status}:${r.isFinalRound}`).join(','),
-          apSummary: data.applications?.map((a) => `${a.id}:${a.eligibilityStatus}:${a.status}`).join(','),
-          cdSummary: `${data.candidates?.length}:${data.candidates?.map((c) => `${c.id}:${c.entryStatus}`).join(',')}`,
-          btSummary: data.batches?.map((b) => `${b.id}:${b.status}:${b.capacity}`).join(','),
-          bsSummary: `${data.batchStudents?.length}:${data.batchStudents?.map((bs) => `${bs.batchId}:${bs.studentId}`).join(',')}`,
-          evSummary: `${data.evaluations?.length}:${data.evaluations?.map((e) => `${e.batchId}:${e.studentId}:${e.action}`).join(',')}`,
-          rrSummary: `${data.roundResults?.length}:${data.roundResults?.map((r) => `${r.roundId}:${r.studentId}:${r.result}`).join(',')}`,
-          plSummary: data.placements?.length,
-        });
+        // Compare complete normalized records so in-place changes to any field are detected.
+        const normalize = (value: any): any => {
+          if (Array.isArray(value)) return value.map(normalize);
+          if (value && typeof value === 'object') {
+            return Object.keys(value).sort().reduce((out: Record<string, any>, key) => {
+              out[key] = normalize(value[key]);
+              return out;
+            }, {});
+          }
+          return value;
+        };
+        const currentFingerprint = JSON.stringify(normalize({
+          students: data.students || [],
+          drives: data.drives || [],
+          rounds: data.rounds || [],
+          applications: data.applications || [],
+          candidates: data.candidates || [],
+          batches: data.batches || [],
+          batchStudents: data.batchStudents || [],
+          evaluations: data.evaluations || [],
+          roundResults: data.roundResults || [],
+          placements: data.placements || [],
+        }));
 
         if (currentFingerprint === this.lastSyncFingerprint) {
           return false;
@@ -174,7 +185,16 @@ class IronStorage {
           this.set(STORAGE_KEYS.BATCH_STUDENTS, data.batchStudents);
         }
         if (Array.isArray(data.evaluations)) {
-          this.set(STORAGE_KEYS.EVALUATIONS, data.evaluations);
+          // Keep in-flight optimistic edits until their own request settles; stale sync snapshots
+          // must not erase a decision while another save is still pending.
+          const now = Date.now();
+          const pending = new Map(
+            Array.from(this.pendingEvaluationWrites.entries()).filter(([, value]) => now - value.timestamp < 30000)
+          );
+          this.pendingEvaluationWrites = pending;
+          const remoteByKey = new Map(data.evaluations.map((e: Evaluation) => [`${e.batchId}:${e.studentId}`, e]));
+          for (const [key, value] of pending) remoteByKey.set(key, value.evaluation);
+          this.set(STORAGE_KEYS.EVALUATIONS, Array.from(remoteByKey.values()));
         }
         if (Array.isArray(data.roundResults)) {
           this.set(STORAGE_KEYS.ROUND_RESULTS, data.roundResults);
@@ -1350,19 +1370,29 @@ class IronStorage {
     }
 
     const evals = this.getEvaluations();
-    const prevEvals = JSON.parse(JSON.stringify(evals));
+    const key = `${batchId}:${studentId}`;
+    const previous = evals.find((e) => e.batchId === batchId && e.studentId === studentId);
     const updated = this.saveEvaluation(batchId, batchStudentId, studentId, action, allowSubmittedEdit, false);
+    this.pendingEvaluationWrites.set(key, { evaluation: updated, timestamp: Date.now() });
 
     try {
       await api.evaluations.evaluate({
         batchId,
         roundId: batch.roundId,
         studentId,
-        action: action === 'NONE' ? 'REJECT' : action,
+        action,
       });
+      this.pendingEvaluationWrites.delete(key);
     } catch (err: any) {
-      // Rollback on server error
-      this.set(STORAGE_KEYS.EVALUATIONS, prevEvals);
+      // Roll back only this student's decision, never the entire evaluations array.
+      const current = this.getEvaluations();
+      const index = current.findIndex((e) => e.batchId === batchId && e.studentId === studentId);
+      if (index >= 0) {
+        if (previous) current[index] = previous;
+        else current.splice(index, 1);
+        this.set(STORAGE_KEYS.EVALUATIONS, current);
+      }
+      this.pendingEvaluationWrites.delete(key);
       this.notifyListeners();
       throw new Error(`Server rejection: ${err.message || err}`);
     }
@@ -1626,24 +1656,26 @@ class IronStorage {
     rejectedCount: number;
     placedCount: number;
   }> {
-    // 1. Process local updates without duplicate fire-and-forget
-    const localResult = this.submitBatch(batchId, submittedBy, allowResubmit, false);
-
-    // 2. Process authoritative backend submission
-    try {
-      const backendRes = await api.evaluations.submitBatch(batchId);
-      // Synchronize full state from backend to ensure identical data structures across clients
-      await this.syncWithBackend();
-      return {
-        selectedCount: backendRes.selectedCount ?? localResult.selectedCount,
-        holdCount: backendRes.holdCount ?? localResult.holdCount,
-        rejectedCount: backendRes.rejectedCount ?? localResult.rejectedCount,
-        placedCount: backendRes.placedCount ?? localResult.placedCount,
-      };
-    } catch (err: any) {
-      console.warn('Backend submitBatch warning (fallback to local state):', err);
-      return localResult;
+    // Wait for every in-flight decision in this batch before the server freezes it.
+    // A rejected save aborts submission instead of freezing an incomplete evaluation set.
+    const pendingWrites = Array.from(this.pendingEvaluationWrites.entries())
+      .filter(([key]) => key.startsWith(`${batchId}:`));
+    if (pendingWrites.length) {
+      throw new Error('Evaluation saves are still pending. Please wait and submit again.');
     }
+
+    // The backend is authoritative: do not mutate local results or show success until it confirms.
+    const backendRes = await api.evaluations.submitBatch(batchId);
+    if (!backendRes?.success || backendRes.status !== 'SUBMITTED') {
+      throw new Error('The server did not confirm batch submission.');
+    }
+    await this.syncWithBackend();
+    return {
+      selectedCount: backendRes.selectedCount ?? 0,
+      holdCount: backendRes.holdCount ?? 0,
+      rejectedCount: backendRes.rejectedCount ?? 0,
+      placedCount: backendRes.placedCount ?? 0,
+    };
   }
 
   // --- ROUND RESULTS ---
