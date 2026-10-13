@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { getDatabase, IronDatabase } from './db';
 import { verifyPassword, signJwt, verifyJwt, JwtPayload, generateSalt, hashPassword } from './crypto';
-import { calculateIstApplicationDeadline } from '../utils/date';
+import { addCalendarMonths, calculateIstApplicationDeadline, getIstCalendarDate } from '../utils/date';
 import { BRANCH_DEPARTMENT_MAP } from '../types';
 
 export const apiRouter = express.Router();
@@ -888,12 +888,9 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
     const db = getDatabase();
     const d = req.body;
 
-    const driveDate = d.driveDate || new Date().toISOString().split('T')[0];
+    const driveDate = d.driveDate || getIstCalendarDate();
     const applicationDeadline = calculateIstApplicationDeadline(driveDate);
-    const driveDateObj = new Date(driveDate);
-    const retentionDate = new Date(driveDateObj);
-    retentionDate.setMonth(retentionDate.getMonth() + 6);
-    const retentionExpiresAt = retentionDate.toISOString().split('T')[0];
+    const retentionExpiresAt = addCalendarMonths(driveDate, 6);
 
     const driveId = d.id || `drv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const companySlug = (d.companyName || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -1074,8 +1071,9 @@ apiRouter.put('/drives/:id', authMiddleware, roleMiddleware(['TPO']), async (req
     const minimumCgpa = d.minimumCgpa !== undefined ? Number(d.minimumCgpa) : (existingDrive.minimum_cgpa ?? 7.0);
     const backlogRule = d.backlogRule !== undefined ? (d.backlogRule === 'NOT_APPLICABLE' ? 'NOT_APPLICABLE' : Number(d.backlogRule)) : (existingDrive.backlog_rule ?? 0);
     const eligibleBranches = d.eligibleBranches ? JSON.stringify(d.eligibleBranches) : (existingDrive.eligible_branches ?? '["CSE","IT","ECE"]');
-    const driveDate = d.driveDate ?? existingDrive.drive_date ?? new Date().toISOString().split('T')[0];
+    const driveDate = d.driveDate ?? existingDrive.drive_date ?? getIstCalendarDate();
     const applicationDeadline = d.applicationDeadline ?? calculateIstApplicationDeadline(driveDate);
+    const retentionExpiresAt = addCalendarMonths(driveDate, 6);
     const driveTime = d.driveTime ?? existingDrive.drive_time ?? '09:00';
     const location = d.location ?? existingDrive.location ?? 'Auditorium';
     const status = d.status ?? existingDrive.status ?? 'UPCOMING';
@@ -1095,6 +1093,7 @@ apiRouter.put('/drives/:id', authMiddleware, roleMiddleware(['TPO']), async (req
              drive_time = ?,
              location = ?,
              application_deadline = ?,
+             retention_expires_at = ?,
              status = ?,
              updated_at = datetime('now')
          WHERE id = ?`
@@ -1112,6 +1111,7 @@ apiRouter.put('/drives/:id', authMiddleware, roleMiddleware(['TPO']), async (req
         driveTime,
         location,
         applicationDeadline,
+        retentionExpiresAt,
         status,
         driveId
       )
