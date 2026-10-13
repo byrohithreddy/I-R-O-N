@@ -188,7 +188,6 @@ export const HrEvaluationView: React.FC<HrEvaluationViewProps> = ({
 
     try {
       await ironStorage.saveEvaluationAsync(selectedBatch.id, batchStudentId, studentId, newAction, true);
-      onRefresh();
     } catch (err: any) {
       alert(`Evaluation failed: ${err.message || err}`);
     }
