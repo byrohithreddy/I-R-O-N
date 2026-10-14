@@ -17,6 +17,7 @@ import {
 import JSZip from 'jszip';
 import { api } from './api';
 import { addCalendarMonths, calculateIstApplicationDeadline, formatIstTimestamp, getIstCalendarDate } from '../utils/date';
+import { generateRecruiterCredentials } from '../utils/credentials';
 
 const STORAGE_KEYS = {
   USERS: 'iron_users_v1',
@@ -451,15 +452,7 @@ class IronStorage {
     if (drive?.credentials?.coordinatorUsername && drive?.credentials?.coordinatorPassword) {
       return drive.credentials;
     }
-    const companySlug = (drive?.companyName || 'drive')
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, '');
-    return {
-      coordinatorUsername: `coord_${companySlug}`,
-      coordinatorPassword: `coord2026@${companySlug}`,
-      hrUsername: `hr_${companySlug}`,
-      hrPassword: `hr2026@${companySlug}`,
-    };
+    return generateRecruiterCredentials(drive?.companyName || 'drive', drive?.id);
   }
 
   public getDrives(): Drive[] {
@@ -467,14 +460,12 @@ class IronStorage {
     return raw
       .filter((d) => !MOCK_DRIVE_IDS.has(d.id) && !MOCK_COMPANY_NAMES.has(d.companyName))
       .map((d) => {
-        const companySlug = (d.companyName || 'drive')
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, '');
+        const defaultCreds = generateRecruiterCredentials(d.companyName || 'drive', d.id);
         const credentials: DriveCredentials = {
-          coordinatorUsername: d.credentials?.coordinatorUsername || `coord_${companySlug}`,
-          coordinatorPassword: d.credentials?.coordinatorPassword || `coord2026@${companySlug}`,
-          hrUsername: d.credentials?.hrUsername || `hr_${companySlug}`,
-          hrPassword: d.credentials?.hrPassword || `hr2026@${companySlug}`,
+          coordinatorUsername: d.credentials?.coordinatorUsername || defaultCreds.coordinatorUsername,
+          coordinatorPassword: d.credentials?.coordinatorPassword || defaultCreds.coordinatorPassword,
+          hrUsername: d.credentials?.hrUsername || defaultCreds.hrUsername,
+          hrPassword: d.credentials?.hrPassword || defaultCreds.hrPassword,
         };
         return { ...d, credentials };
       });
@@ -521,11 +512,10 @@ class IronStorage {
       this.notifyListeners();
       return updated;
     } else {
-      const companySlug = (driveData.companyName || 'drive')
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, '');
+      const newDriveId = `drv_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`;
+      const generatedCreds = generateRecruiterCredentials(driveData.companyName || 'drive', newDriveId);
       const newDrive: Drive = {
-        id: `drv_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+        id: newDriveId,
         companyName: driveData.companyName || 'Untitled Company',
         jobRole: driveData.jobRole || 'Graduate Engineer Trainee',
         package: driveData.package || '₹6.0 LPA',
@@ -542,12 +532,7 @@ class IronStorage {
         retentionExpiresAt,
         createdAt: now,
         updatedAt: now,
-        credentials: {
-          coordinatorUsername: `coord_${companySlug}`,
-          coordinatorPassword: `coord2026@${companySlug}`,
-          hrUsername: `hr_${companySlug}`,
-          hrPassword: `hr2026@${companySlug}`,
-        },
+        credentials: generatedCreds,
       };
       drives.unshift(newDrive);
       this.pendingDriveUpdates.set(newDrive.id, { data: newDrive, timestamp: Date.now() });

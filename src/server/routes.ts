@@ -3,6 +3,23 @@ import { getDatabase, IronDatabase } from './db';
 import { verifyPassword, signJwt, verifyJwt, JwtPayload, generateSalt, hashPassword } from './crypto';
 import { addCalendarMonths, calculateIstApplicationDeadline, getIstCalendarDate } from '../utils/date';
 import { BRANCH_DEPARTMENT_MAP } from '../types';
+import { generateRecruiterCredentials } from '../utils/credentials';
+
+// In-memory sliding-window rate limiter for student lookup (SEC-05): Max 3 requests per 1 minute
+const lookupRateLimits = new Map<string, number[]>();
+function checkLookupRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const windowMs = 60 * 1000;
+  const maxRequests = 3;
+  const timestamps = (lookupRateLimits.get(ip) || []).filter((t) => now - t < windowMs);
+  if (timestamps.length >= maxRequests) {
+    lookupRateLimits.set(ip, timestamps);
+    return false;
+  }
+  timestamps.push(now);
+  lookupRateLimits.set(ip, timestamps);
+  return true;
+}
 
 export const apiRouter = express.Router();
 
@@ -229,9 +246,10 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
     } catch {
       // Until migration 0003 is applied, use uncached responses rather than failing synchronization.
     }
+    const staffDriveId = !isTpo && isStaff ? currentUser?.driveId : null;
     const etag = Number.isFinite(revision)
-      ? `W/"sync_${isStaff ? 'staff' : 'pub'}_${isTpo ? 'tpo' : 'notpo'}_${revision}"`
-      : `W/"sync_uncached_${isStaff ? 'staff' : 'pub'}_${Date.now()}"`;
+      ? `W/"sync_${isStaff ? (isTpo ? 'tpo' : `staff_${staffDriveId || 'nodrive'}`) : 'pub'}_${revision}"`
+      : `W/"sync_uncached_${isStaff ? (isTpo ? 'tpo' : `staff_${staffDriveId || 'nodrive'}`) : 'pub'}_${Date.now()}"`;
 
     const ifNoneMatch = req.headers['if-none-match'];
     if (ifNoneMatch && ifNoneMatch === etag) {
@@ -250,7 +268,11 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
       roundResultsRes,
       placementsRes,
     ] = await Promise.all([
-      isStaff ? db.prepare('SELECT * FROM students ORDER BY roll_number ASC LIMIT 3000').all<any>() : Promise.resolve({ results: [] }),
+      isTpo
+        ? db.prepare('SELECT * FROM students ORDER BY roll_number ASC LIMIT 3000').all<any>()
+        : staffDriveId
+        ? db.prepare('SELECT DISTINCT s.* FROM students s JOIN applications a ON s.id = a.student_id WHERE a.drive_id = ? ORDER BY s.roll_number ASC').bind(staffDriveId).all<any>()
+        : Promise.resolve({ results: [] }),
       isTpo
         ? db.prepare(
             `SELECT d.*, 
@@ -260,17 +282,49 @@ apiRouter.get('/sync', async (req: Request, res: Response) => {
              LEFT JOIN drive_credentials c ON d.id = c.drive_id 
              ORDER BY d.drive_date DESC`
           ).all<any>()
-        : db
-            .prepare(`SELECT * FROM drives WHERE status != 'DRAFT' ORDER BY drive_date DESC`)
-            .all<any>(),
-      db.prepare('SELECT * FROM rounds ORDER BY round_number ASC').all<any>(),
-      isStaff ? db.prepare('SELECT * FROM applications ORDER BY applied_at DESC').all<any>() : Promise.resolve({ results: [] }),
-      isStaff ? db.prepare('SELECT * FROM round_candidates').all<any>() : Promise.resolve({ results: [] }),
-      isStaff ? db.prepare('SELECT * FROM batches ORDER BY created_at ASC').all<any>() : Promise.resolve({ results: [] }),
-      isStaff ? db.prepare('SELECT * FROM batch_students').all<any>() : Promise.resolve({ results: [] }),
-      isStaff ? db.prepare('SELECT * FROM evaluations').all<any>() : Promise.resolve({ results: [] }),
-      isStaff ? db.prepare('SELECT * FROM round_results').all<any>() : Promise.resolve({ results: [] }),
-      db.prepare('SELECT * FROM placements ORDER BY placed_at DESC').all<any>(),
+        : staffDriveId
+        ? db.prepare(`SELECT * FROM drives WHERE id = ? OR status != 'DRAFT' ORDER BY drive_date DESC`).bind(staffDriveId).all<any>()
+        : db.prepare(`SELECT * FROM drives WHERE status != 'DRAFT' ORDER BY drive_date DESC`).all<any>(),
+      isTpo
+        ? db.prepare('SELECT * FROM rounds ORDER BY round_number ASC').all<any>()
+        : staffDriveId
+        ? db.prepare('SELECT * FROM rounds WHERE drive_id = ? ORDER BY round_number ASC').bind(staffDriveId).all<any>()
+        : db.prepare('SELECT r.* FROM rounds r JOIN drives d ON r.drive_id = d.id WHERE d.status != \'DRAFT\' ORDER BY r.round_number ASC').all<any>(),
+      isTpo
+        ? db.prepare('SELECT * FROM applications ORDER BY applied_at DESC').all<any>()
+        : staffDriveId
+        ? db.prepare('SELECT * FROM applications WHERE drive_id = ? ORDER BY applied_at DESC').bind(staffDriveId).all<any>()
+        : Promise.resolve({ results: [] }),
+      isTpo
+        ? db.prepare('SELECT * FROM round_candidates').all<any>()
+        : staffDriveId
+        ? db.prepare('SELECT * FROM round_candidates WHERE drive_id = ?').bind(staffDriveId).all<any>()
+        : Promise.resolve({ results: [] }),
+      isTpo
+        ? db.prepare('SELECT * FROM batches ORDER BY created_at ASC').all<any>()
+        : staffDriveId
+        ? db.prepare('SELECT * FROM batches WHERE drive_id = ? ORDER BY created_at ASC').bind(staffDriveId).all<any>()
+        : Promise.resolve({ results: [] }),
+      isTpo
+        ? db.prepare('SELECT * FROM batch_students').all<any>()
+        : staffDriveId
+        ? db.prepare('SELECT bs.* FROM batch_students bs JOIN batches b ON bs.batch_id = b.id WHERE b.drive_id = ?').bind(staffDriveId).all<any>()
+        : Promise.resolve({ results: [] }),
+      isTpo
+        ? db.prepare('SELECT * FROM evaluations').all<any>()
+        : staffDriveId
+        ? db.prepare('SELECT e.* FROM evaluations e JOIN batches b ON e.batch_id = b.id WHERE b.drive_id = ?').bind(staffDriveId).all<any>()
+        : Promise.resolve({ results: [] }),
+      isTpo
+        ? db.prepare('SELECT * FROM round_results').all<any>()
+        : staffDriveId
+        ? db.prepare('SELECT * FROM round_results WHERE drive_id = ?').bind(staffDriveId).all<any>()
+        : Promise.resolve({ results: [] }),
+      isTpo
+        ? db.prepare('SELECT * FROM placements ORDER BY placed_at DESC').all<any>()
+        : staffDriveId
+        ? db.prepare('SELECT * FROM placements WHERE drive_id = ? ORDER BY placed_at DESC').bind(staffDriveId).all<any>()
+        : db.prepare('SELECT * FROM placements ORDER BY placed_at DESC').all<any>(),
     ]);
 
     res.setHeader('ETag', etag);
@@ -482,9 +536,16 @@ apiRouter.get('/students', authMiddleware, roleMiddleware(['TPO', 'COORDINATOR',
   }
 });
 
-// GET /api/students/by-roll/:rollNumber
+// GET /api/students/by-roll/:rollNumber (SEC-05: Rate Limited to 3 req/min, phone withheld)
 apiRouter.get('/students/by-roll/:rollNumber', async (req: Request, res: Response) => {
   try {
+    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || req.socket.remoteAddress || 'anon';
+    if (!checkLookupRateLimit(clientIp)) {
+      res.setHeader('Retry-After', '60');
+      res.setHeader('Cache-Control', 'no-store, private');
+      return res.status(429).json({ error: 'Rate limit exceeded: Maximum 3 student lookups per minute. Please try again later.' });
+    }
+
     const db = getDatabase();
     const cleanRoll = req.params.rollNumber.trim().toUpperCase();
 
@@ -494,20 +555,25 @@ apiRouter.get('/students/by-roll/:rollNumber', async (req: Request, res: Respons
       .first<any>();
 
     if (!r) {
+      res.setHeader('Cache-Control', 'no-store, private');
       return res.status(404).json({ error: `Roll number ${cleanRoll} is not found in Student Master DB` });
     }
 
-    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=120');
+    res.setHeader('Cache-Control', 'no-store, private');
     res.json({
       id: r.id,
       rollNumber: r.roll_number,
       fullName: r.full_name,
       email: r.email,
-      phone: r.phone,
+      // Phone number is sensitive and strictly withheld from public lookup response (SEC-05)
       branch: r.branch,
+      college: r.college || 'Institute of Engineering & Technology',
+      department: r.department || r.branch,
+      academicYear: r.academic_year || '2023-2027',
       cgpa: r.cgpa,
-      activeBacklogs: r.active_backlogs,
-      historyOfBacklogs: r.history_of_backlogs,
+      activeBacklogs: r.active_backlogs ?? 0,
+      historyOfBacklogs: r.history_of_backlogs ?? 0,
+      backlogCount: r.active_backlogs ?? 0,
       gender: r.gender,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
@@ -929,10 +995,11 @@ apiRouter.post('/drives', authMiddleware, roleMiddleware(['TPO']), async (req: R
     );
 
     // Recruiter accounts
-    const coordUser = d.credentials?.coordinatorUsername || `coord_${companySlug}`;
-    const coordPass = d.credentials?.coordinatorPassword || `coord2026@${companySlug}`;
-    const hrUser = d.credentials?.hrUsername || `hr_${companySlug}`;
-    const hrPass = d.credentials?.hrPassword || `hr2026@${companySlug}`;
+    const defaultCreds = generateRecruiterCredentials(d.companyName || 'drive', driveId);
+    const coordUser = d.credentials?.coordinatorUsername || defaultCreds.coordinatorUsername;
+    const coordPass = d.credentials?.coordinatorPassword || defaultCreds.coordinatorPassword;
+    const hrUser = d.credentials?.hrUsername || defaultCreds.hrUsername;
+    const hrPass = d.credentials?.hrPassword || defaultCreds.hrPassword;
 
     const coordSalt = generateSalt();
     const coordHash = await hashPassword(coordPass, coordSalt);
@@ -1119,11 +1186,11 @@ apiRouter.put('/drives/:id', authMiddleware, roleMiddleware(['TPO']), async (req
 
     // Ensure recruiter credentials exist
     const cred = await db.prepare('SELECT * FROM drive_credentials WHERE drive_id = ?').bind(driveId).first<any>();
-    const companySlug = (companyName || 'drive').toLowerCase().replace(/[^a-z0-9]/g, '');
-    const coordUser = cred?.coordinator_username || `coord_${companySlug}`;
-    const coordPass = cred?.plain_coordinator_password || `coord2026@${companySlug}`;
-    const hrUser = cred?.hr_username || `hr_${companySlug}`;
-    const hrPass = cred?.plain_hr_password || `hr2026@${companySlug}`;
+    const defaultCreds = generateRecruiterCredentials(companyName || 'drive', driveId);
+    const coordUser = cred?.coordinator_username || defaultCreds.coordinatorUsername;
+    const coordPass = cred?.plain_coordinator_password || defaultCreds.coordinatorPassword;
+    const hrUser = cred?.hr_username || defaultCreds.hrUsername;
+    const hrPass = cred?.plain_hr_password || defaultCreds.hrPassword;
 
     if (!cred) {
       const coordSalt = generateSalt();

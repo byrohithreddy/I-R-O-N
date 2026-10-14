@@ -2,6 +2,23 @@
 // Powered by Cloudflare Workers Runtime & Cloudflare D1 (SQLite)
 
 import { addCalendarMonths, calculateIstApplicationDeadline, getIstCalendarDate } from '../../src/utils/date';
+import { generateRecruiterCredentials } from '../../src/utils/credentials';
+
+// In-memory sliding-window rate limiter for student lookup (SEC-05): Max 3 requests per 1 minute
+const lookupRateLimits = new Map<string, number[]>();
+function checkLookupRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const windowMs = 60 * 1000;
+  const maxRequests = 3;
+  const timestamps = (lookupRateLimits.get(ip) || []).filter((t) => now - t < windowMs);
+  if (timestamps.length >= maxRequests) {
+    lookupRateLimits.set(ip, timestamps);
+    return false;
+  }
+  timestamps.push(now);
+  lookupRateLimits.set(ip, timestamps);
+  return true;
+}
 
 interface D1Result<T = any> {
   results: T[];
@@ -84,7 +101,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     });
   };
 
-  const secret = env.JWT_SECRET || 'iron_jwt_prod_sec_d83e29f10a7c491b86e054fa72c3d198b';
+  // Fail closed if JWT_SECRET is not configured (SEC-03)
+  const secret = env.JWT_SECRET || '';
 
   const BRANCH_DEPT_MAP: Record<string, string> = {
     CSE: 'Computer Science & Engineering',
@@ -166,6 +184,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const currentUser = await getAuthUser();
       const isTpo = currentUser?.role === 'TPO';
       const isStaff = Boolean(currentUser && ['TPO', 'COORDINATOR', 'HR'].includes(currentUser.role));
+      const staffDriveId = !isTpo && currentUser?.driveId ? currentUser.driveId : undefined;
 
       // Every insert/update/delete to a sync-visible table increments this revision via D1 triggers.
       // Unlike row counts or second-resolution timestamps, it detects in-place edits reliably.
@@ -177,8 +196,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         // Backward-compatible rollout: until migration 0003 is applied, disable 304 responses.
       }
       const etag = Number.isFinite(revision)
-        ? `W/"sync_${isStaff ? 'staff' : 'pub'}_${isTpo ? 'tpo' : 'notpo'}_${revision}"`
-        : `W/"sync_uncached_${isStaff ? 'staff' : 'pub'}_${Date.now()}"`;
+        ? `W/"sync_${isStaff ? 'staff' : 'pub'}_${isTpo ? 'tpo' : 'notpo'}_${staffDriveId || 'all'}_${revision}"`
+        : `W/"sync_uncached_${isStaff ? 'staff' : 'pub'}_${staffDriveId || 'all'}_${Date.now()}"`;
 
       const ifNoneMatch = request.headers.get('If-None-Match');
       if (ifNoneMatch && ifNoneMatch === etag) {
@@ -200,7 +219,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         roundResultsRes,
         placementsRes,
       ] = await Promise.all([
-        isStaff ? env.DB.prepare('SELECT * FROM students ORDER BY roll_number ASC LIMIT 3000').all() : Promise.resolve({ results: [] }),
+        isTpo
+          ? env.DB.prepare('SELECT * FROM students ORDER BY roll_number ASC LIMIT 3000').all()
+          : staffDriveId
+          ? env.DB.prepare('SELECT DISTINCT s.* FROM students s JOIN applications a ON s.id = a.student_id WHERE a.drive_id = ? ORDER BY s.roll_number ASC').bind(staffDriveId).all()
+          : Promise.resolve({ results: [] }),
         env.DB.prepare(
           isTpo
             ? `SELECT d.*, 
@@ -209,16 +232,50 @@ export const onRequest: PagesFunction<Env> = async (context) => {
                FROM drives d 
                LEFT JOIN drive_credentials c ON d.id = c.drive_id 
                ORDER BY d.drive_date DESC`
+            : staffDriveId
+            ? `SELECT * FROM drives WHERE id = ? OR status != 'DRAFT' ORDER BY drive_date DESC`
             : `SELECT * FROM drives WHERE status != 'DRAFT' ORDER BY drive_date DESC`
-        ).all(),
-        env.DB.prepare('SELECT * FROM rounds ORDER BY round_number ASC').all(),
-        isStaff ? env.DB.prepare('SELECT * FROM applications ORDER BY applied_at DESC').all() : Promise.resolve({ results: [] }),
-        isStaff ? env.DB.prepare('SELECT * FROM round_candidates').all() : Promise.resolve({ results: [] }),
-        isStaff ? env.DB.prepare('SELECT * FROM batches ORDER BY created_at ASC').all() : Promise.resolve({ results: [] }),
-        isStaff ? env.DB.prepare('SELECT * FROM batch_students').all() : Promise.resolve({ results: [] }),
-        isStaff ? env.DB.prepare('SELECT * FROM evaluations').all() : Promise.resolve({ results: [] }),
-        isStaff ? env.DB.prepare('SELECT * FROM round_results').all() : Promise.resolve({ results: [] }),
-        env.DB.prepare('SELECT * FROM placements ORDER BY placed_at DESC').all(),
+        ).bind(...(isTpo ? [] : staffDriveId ? [staffDriveId] : [])).all(),
+        isTpo
+          ? env.DB.prepare('SELECT * FROM rounds ORDER BY round_number ASC').all()
+          : staffDriveId
+          ? env.DB.prepare('SELECT * FROM rounds WHERE drive_id = ? ORDER BY round_number ASC').bind(staffDriveId).all()
+          : env.DB.prepare('SELECT r.* FROM rounds r JOIN drives d ON r.drive_id = d.id WHERE d.status != \'DRAFT\' ORDER BY r.round_number ASC').all(),
+        isTpo
+          ? env.DB.prepare('SELECT * FROM applications ORDER BY applied_at DESC').all()
+          : staffDriveId
+          ? env.DB.prepare('SELECT * FROM applications WHERE drive_id = ? ORDER BY applied_at DESC').bind(staffDriveId).all()
+          : Promise.resolve({ results: [] }),
+        isTpo
+          ? env.DB.prepare('SELECT * FROM round_candidates').all()
+          : staffDriveId
+          ? env.DB.prepare('SELECT * FROM round_candidates WHERE drive_id = ?').bind(staffDriveId).all()
+          : Promise.resolve({ results: [] }),
+        isTpo
+          ? env.DB.prepare('SELECT * FROM batches ORDER BY created_at ASC').all()
+          : staffDriveId
+          ? env.DB.prepare('SELECT * FROM batches WHERE drive_id = ? ORDER BY created_at ASC').bind(staffDriveId).all()
+          : Promise.resolve({ results: [] }),
+        isTpo
+          ? env.DB.prepare('SELECT * FROM batch_students').all()
+          : staffDriveId
+          ? env.DB.prepare('SELECT bs.* FROM batch_students bs JOIN batches b ON bs.batch_id = b.id WHERE b.drive_id = ?').bind(staffDriveId).all()
+          : Promise.resolve({ results: [] }),
+        isTpo
+          ? env.DB.prepare('SELECT * FROM evaluations').all()
+          : staffDriveId
+          ? env.DB.prepare('SELECT e.* FROM evaluations e JOIN batches b ON e.batch_id = b.id WHERE b.drive_id = ?').bind(staffDriveId).all()
+          : Promise.resolve({ results: [] }),
+        isTpo
+          ? env.DB.prepare('SELECT * FROM round_results').all()
+          : staffDriveId
+          ? env.DB.prepare('SELECT * FROM round_results WHERE drive_id = ?').bind(staffDriveId).all()
+          : Promise.resolve({ results: [] }),
+        isTpo
+          ? env.DB.prepare('SELECT * FROM placements ORDER BY placed_at DESC').all()
+          : staffDriveId
+          ? env.DB.prepare('SELECT * FROM placements WHERE drive_id = ? ORDER BY placed_at DESC').bind(staffDriveId).all()
+          : env.DB.prepare('SELECT * FROM placements ORDER BY placed_at DESC').all(),
       ]);
 
       return jsonResponse({
@@ -603,11 +660,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         )
         .run();
 
-      // Recruiter credentials
-      const coordUser = `coord_${companySlug}`;
-      const coordPass = `coord2026@${companySlug}`;
-      const hrUser = `hr_${companySlug}`;
-      const hrPass = `hr2026@${companySlug}`;
+      // Recruiter credentials (SEC-02: Hardened deterministic credentials)
+      const defaultCreds = generateRecruiterCredentials(d.companyName || 'drive', driveId);
+      const coordUser = d.credentials?.coordinatorUsername || defaultCreds.coordinatorUsername;
+      const coordPass = d.credentials?.coordinatorPassword || defaultCreds.coordinatorPassword;
+      const hrUser = d.credentials?.hrUsername || defaultCreds.hrUsername;
+      const hrPass = d.credentials?.hrPassword || defaultCreds.hrPassword;
 
       const coordSalt = generateSalt();
       const coordHash = await hashPassword(coordPass, coordSalt);
@@ -860,28 +918,43 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // 3. Students: /api/students
     const studentByRollMatch = path.match(/^\/api\/students\/by-roll\/([a-zA-Z0-9_%-]+)$/);
     if (studentByRollMatch && method === 'GET') {
+      const clientIp = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'anon';
+      if (!checkLookupRateLimit(clientIp)) {
+        return jsonResponse(
+          { error: 'Rate limit exceeded: Maximum 3 student lookups per minute. Please try again later.' },
+          429,
+          { 'Retry-After': '60', 'Cache-Control': 'no-store, private' }
+        );
+      }
+
       const cleanRoll = decodeURIComponent(studentByRollMatch[1]).trim().toUpperCase();
       const s = await env.DB.prepare('SELECT * FROM students WHERE UPPER(roll_number) = ?').bind(cleanRoll).first<any>();
-      if (!s) return jsonResponse({ error: `Student with roll number ${cleanRoll} not found` }, 404);
+      if (!s) {
+        return jsonResponse(
+          { error: `Roll number ${cleanRoll} is not found in Student Master DB` },
+          404,
+          { 'Cache-Control': 'no-store, private' }
+        );
+      }
       return jsonResponse({
         id: s.id,
         rollNumber: s.roll_number,
         fullName: s.full_name,
         email: s.email,
-        phone: s.phone,
+        // Phone number is sensitive and strictly withheld from public lookup response (SEC-05)
         branch: s.branch,
         college: s.college || 'Institute of Engineering & Technology',
         department: s.department || s.branch,
         academicYear: s.academic_year || '2023-2027',
         cgpa: s.cgpa,
-        activeBacklogs: s.active_backlogs,
-        historyOfBacklogs: s.history_of_backlogs,
-        backlogCount: s.active_backlogs,
+        activeBacklogs: s.active_backlogs ?? 0,
+        historyOfBacklogs: s.history_of_backlogs ?? 0,
+        backlogCount: s.active_backlogs ?? 0,
         gender: s.gender,
         createdAt: s.created_at,
         updatedAt: s.updated_at,
       }, 200, {
-        'Cache-Control': 'no-store, no-cache, private',
+        'Cache-Control': 'no-store, private',
       });
     }
 
