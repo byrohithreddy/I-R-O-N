@@ -337,4 +337,18 @@ export const api = {
       return request('/archives');
     },
   },
+
+  // Security & TPO Credentials
+  security: {
+    async changePassword(oldPassword: string, newPassword: string, confirmNewPassword: string): Promise<{ success: boolean; message: string }> {
+      return request<{ success: boolean; message: string }>('/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ oldPassword, newPassword, confirmNewPassword }),
+      });
+    },
+
+    async getLogs(): Promise<{ logs: Array<{ id: string; user_id: string; username: string; ip_address: string; user_agent: string; status: string; created_at: string }> }> {
+      return request<{ logs: Array<{ id: string; user_id: string; username: string; ip_address: string; user_agent: string; status: string; created_at: string }> }>('/security/logs');
+    },
+  },
 };

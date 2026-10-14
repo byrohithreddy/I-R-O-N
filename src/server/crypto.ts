@@ -95,6 +95,7 @@ export interface JwtPayload {
   driveId?: string;
   companyName?: string;
   fullName: string;
+  tokenVersion?: number;
   iat: number;
   exp: number;
 }

@@ -133,13 +133,34 @@ export async function initializeDatabase(db: IronDatabase): Promise<void> {
     }
   } catch (e) {}
 
-  // Users table is_active column compatibility
+  // Users table is_active & token_version column compatibility
   try {
     const columns = await db.prepare('PRAGMA table_info(users)').all<any>();
     const names = new Set(columns.results.map((r: any) => r.name));
     if (!names.has('is_active')) {
       db.exec('ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1');
     }
+    if (!names.has('token_version')) {
+      db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1');
+    }
+  } catch (e) {}
+
+  // Password change logs table compatibility
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS password_change_logs (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        ip_address TEXT,
+        user_agent TEXT,
+        status TEXT NOT NULL DEFAULT 'SUCCESS',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_pwd_logs_user ON password_change_logs(user_id);
+      CREATE INDEX IF NOT EXISTS idx_pwd_logs_created ON password_change_logs(created_at);
+    `);
   } catch (e) {}
 
   // Ensure UNIQUE index on rounds(drive_id, round_number)

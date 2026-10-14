@@ -14,6 +14,7 @@ import { TpoStudentMaster } from './components/tpo/TpoStudentMaster';
 import { TpoPlacedStudents } from './components/tpo/TpoPlacedStudents';
 import { TpoDriveAnalytics } from './components/tpo/TpoDriveAnalytics';
 import { TpoDataExpiry } from './components/tpo/TpoDataExpiry';
+import { TpoSecurity } from './components/tpo/TpoSecurity';
 import { CoordinatorView } from './components/coordinator/CoordinatorView';
 import { HrEvaluationView } from './components/hr/HrEvaluationView';
 
@@ -175,6 +176,9 @@ export default function App() {
             )}
             {currentView === 'tpo-expiry' && (
               <TpoDataExpiry onRefresh={handleRefresh} />
+            )}
+            {currentView === 'tpo-security' && (
+              <TpoSecurity onLogout={handleLogout} />
             )}
           </>
         )}

@@ -40,6 +40,31 @@ export async function authMiddleware(req: AuthenticatedRequest, res: Response, n
     return res.status(401).json({ error: 'Session expired or token invalid' });
   }
 
+  // Token version verification to enforce immediate invalidation of old sessions upon password change
+  try {
+    const db = getDatabase();
+    const dbUser = await db
+      .prepare('SELECT id, is_active, token_version FROM users WHERE id = ?')
+      .bind(payload.sub)
+      .first<any>();
+
+    if (dbUser) {
+      if (dbUser.is_active === 0) {
+        return res.status(401).json({ error: 'Account is deactivated' });
+      }
+      const dbVersion = Number(dbUser.token_version || 1);
+      const tokenVersion = Number(payload.tokenVersion || 1);
+      if (tokenVersion < dbVersion) {
+        return res.status(401).json({
+          error: 'Session invalidated due to password change. Please sign in with your new credentials.',
+          code: 'SESSION_REVOKED',
+        });
+      }
+    }
+  } catch (err) {
+    // Proceed if check fails gracefully during table migrations
+  }
+
   req.user = payload;
   next();
 }
@@ -194,6 +219,7 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
 
+    const userTokenVersion = Number(user.token_version || 1);
     const token = await signJwt({
       sub: user.id,
       username: user.username,
@@ -201,6 +227,7 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
       driveId: user.drive_id || undefined,
       companyName: user.company_name || undefined,
       fullName: user.full_name,
+      tokenVersion: userTokenVersion,
     });
 
     res.json({
@@ -223,6 +250,119 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
 // GET /api/auth/me
 apiRouter.get('/auth/me', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   res.json({ user: req.user });
+});
+
+// POST /api/auth/change-password - Change TPO Admin Password and Invalidate Sessions
+apiRouter.post('/auth/change-password', authMiddleware, roleMiddleware(['TPO']), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { oldPassword, newPassword, confirmNewPassword } = req.body;
+
+    if (!oldPassword || !newPassword || !confirmNewPassword) {
+      return res.status(400).json({ error: 'Current password, new password, and confirmation are all required.' });
+    }
+
+    const cleanOld = String(oldPassword).trim();
+    const cleanNew = String(newPassword).trim();
+    const cleanConfirm = String(confirmNewPassword).trim();
+
+    if (cleanNew !== cleanConfirm) {
+      return res.status(400).json({ error: 'New password and confirmation do not match.' });
+    }
+
+    if (cleanOld === cleanNew) {
+      return res.status(400).json({ error: 'New password must be different from your current password.' });
+    }
+
+    // Strict password complexity enforcement:
+    // At least 8 characters, with letters, numbers, and symbols
+    if (cleanNew.length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters in length.' });
+    }
+    if (!/[a-zA-Z]/.test(cleanNew)) {
+      return res.status(400).json({ error: 'New password must contain at least one letter.' });
+    }
+    if (!/[0-9]/.test(cleanNew)) {
+      return res.status(400).json({ error: 'New password must contain at least one number.' });
+    }
+    if (!/[^a-zA-Z0-9]/.test(cleanNew)) {
+      return res.status(400).json({ error: 'New password must contain at least one special symbol.' });
+    }
+
+    const db = getDatabase();
+    const user = await db
+      .prepare('SELECT * FROM users WHERE id = ?')
+      .bind(req.user!.sub)
+      .first<any>();
+
+    if (!user) {
+      return res.status(404).json({ error: 'User account not found.' });
+    }
+
+    // Verify current password against cryptographic PBKDF2 hash or seeded fallback
+    let isCurrentValid = false;
+    if (user.salt && user.password_hash) {
+      isCurrentValid = await verifyPassword(cleanOld, user.salt, user.password_hash);
+    }
+    if (!isCurrentValid && user.plain_pass && cleanOld === user.plain_pass) {
+      isCurrentValid = true;
+    }
+
+    if (!isCurrentValid) {
+      return res.status(400).json({ error: 'Current password is incorrect.' });
+    }
+
+    // Generate new cryptographic salt and PBKDF2 hash
+    const newSalt = generateSalt();
+    const newHash = await hashPassword(cleanNew, newSalt);
+
+    // Update user record: replace password hash and salt, increment token_version (invalidating existing active sessions)
+    await db
+      .prepare(
+        `UPDATE users
+         SET password_hash = ?, salt = ?, token_version = token_version + 1
+         WHERE id = ?`
+      )
+      .bind(newHash, newSalt, user.id)
+      .run();
+
+    // Record password change audit trail log with timestamp and client metadata
+    const logId = `pwd_log_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const clientIp = (typeof forwardedFor === 'string' ? forwardedFor.split(',')[0].trim() : req.ip) || '127.0.0.1';
+    const clientUserAgent = (req.headers['user-agent'] as string) || 'IRON Web Client';
+
+    await db
+      .prepare(
+        `INSERT INTO password_change_logs (id, user_id, username, ip_address, user_agent, status, created_at)
+         VALUES (?, ?, ?, ?, ?, 'SUCCESS', datetime('now'))`
+      )
+      .bind(logId, user.id, user.username, clientIp, clientUserAgent)
+      .run();
+
+    res.json({
+      success: true,
+      message: 'Password changed successfully. All active sessions have been invalidated. Please sign in again with your new password.',
+    });
+  } catch (err: any) {
+    console.error('Change password error:', err);
+    res.status(500).json({ error: err.message || 'Failed to change password.' });
+  }
+});
+
+// GET /api/security/logs - Retrieve Password Change Audit Log
+apiRouter.get('/security/logs', authMiddleware, roleMiddleware(['TPO']), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const db = getDatabase();
+    const result = await db
+      .prepare('SELECT id, user_id, username, ip_address, user_agent, status, created_at FROM password_change_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT 50')
+      .bind(req.user!.sub)
+      .all<any>();
+
+    res.json({ logs: result.results || [] });
+  } catch (err: any) {
+    console.error('Fetch security logs error:', err);
+    res.status(500).json({ error: err.message || 'Failed to retrieve security logs.' });
+  }
 });
 
 // GET /api/sync - Unified single-request real-time database sync for all clients

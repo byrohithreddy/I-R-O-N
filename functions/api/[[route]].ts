@@ -150,6 +150,17 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       const payload = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')));
       if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
+
+      try {
+        const dbUser = await env.DB.prepare('SELECT is_active, token_version FROM users WHERE id = ?').bind(payload.sub).first<any>();
+        if (dbUser) {
+          if (dbUser.is_active === 0) return null;
+          const dbVersion = Number(dbUser.token_version || 1);
+          const tokenVersion = Number(payload.tokenVersion || 1);
+          if (tokenVersion < dbVersion) return null;
+        }
+      } catch {}
+
       return payload;
     } catch {
       return null;
@@ -536,6 +547,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         driveId: user.drive_id,
         companyName: user.company_name,
         fullName: user.full_name,
+        tokenVersion: Number(user.token_version || 1),
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 86400 * 7,
       };
@@ -554,6 +566,97 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       const user = await getAuthUser();
       if (!user) return jsonResponse({ error: 'Unauthorized' }, 401);
       return jsonResponse({ user });
+    }
+
+    // POST /api/auth/change-password (TPO Only)
+    if (path === '/api/auth/change-password' && method === 'POST') {
+      const { user: authUser, error } = await requireAuth(['TPO']);
+      if (error) return error;
+
+      const body: any = await request.json().catch(() => ({}));
+      const { oldPassword, newPassword, confirmNewPassword } = body;
+
+      if (!oldPassword || !newPassword || !confirmNewPassword) {
+        return jsonResponse({ error: 'Current password, new password, and confirmation are all required.' }, 400);
+      }
+
+      const cleanOld = String(oldPassword).trim();
+      const cleanNew = String(newPassword).trim();
+      const cleanConfirm = String(confirmNewPassword).trim();
+
+      if (cleanNew !== cleanConfirm) {
+        return jsonResponse({ error: 'New password and confirmation do not match.' }, 400);
+      }
+
+      if (cleanOld === cleanNew) {
+        return jsonResponse({ error: 'New password must be different from current password.' }, 400);
+      }
+
+      if (cleanNew.length < 8) {
+        return jsonResponse({ error: 'New password must be at least 8 characters in length.' }, 400);
+      }
+      if (!/[a-zA-Z]/.test(cleanNew)) {
+        return jsonResponse({ error: 'New password must contain at least one letter.' }, 400);
+      }
+      if (!/[0-9]/.test(cleanNew)) {
+        return jsonResponse({ error: 'New password must contain at least one number.' }, 400);
+      }
+      if (!/[^a-zA-Z0-9]/.test(cleanNew)) {
+        return jsonResponse({ error: 'New password must contain at least one special symbol.' }, 400);
+      }
+
+      const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(authUser.sub).first<any>();
+      if (!user) {
+        return jsonResponse({ error: 'User account not found.' }, 404);
+      }
+
+      let isCurrentValid = false;
+      if (user.salt && user.password_hash) {
+        const computedHash = await hashPassword(cleanOld, user.salt);
+        isCurrentValid = computedHash === user.password_hash;
+      }
+      if (!isCurrentValid && user.plain_pass && cleanOld === user.plain_pass) {
+        isCurrentValid = true;
+      }
+
+      if (!isCurrentValid) {
+        return jsonResponse({ error: 'Current password is incorrect.' }, 400);
+      }
+
+      const newSalt = generateSalt();
+      const newHash = await hashPassword(cleanNew, newSalt);
+
+      await env.DB.prepare(
+        `UPDATE users
+         SET password_hash = ?, salt = ?, token_version = token_version + 1
+         WHERE id = ?`
+      ).bind(newHash, newSalt, user.id).run();
+
+      const logId = `pwd_log_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('x-forwarded-for') || '127.0.0.1';
+      const userAgent = request.headers.get('user-agent') || 'IRON Cloudflare Client';
+
+      await env.DB.prepare(
+        `INSERT INTO password_change_logs (id, user_id, username, ip_address, user_agent, status, created_at)
+         VALUES (?, ?, ?, ?, ?, 'SUCCESS', datetime('now'))`
+      ).bind(logId, user.id, user.username, ip, userAgent).run();
+
+      return jsonResponse({
+        success: true,
+        message: 'Password changed successfully. All active sessions have been invalidated. Please sign in again with your new credentials.',
+      });
+    }
+
+    // GET /api/security/logs (TPO Only)
+    if (path === '/api/security/logs' && method === 'GET') {
+      const { user: authUser, error } = await requireAuth(['TPO']);
+      if (error) return error;
+
+      const result = await env.DB.prepare(
+        'SELECT id, user_id, username, ip_address, user_agent, status, created_at FROM password_change_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT 50'
+      ).bind(authUser.sub).all<any>();
+
+      return jsonResponse({ logs: result.results || [] });
     }
 
     // 2. Drives: GET /api/drives

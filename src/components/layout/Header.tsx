@@ -37,6 +37,7 @@ const ROLE_NAVIGATION: Record<User['role'], NavigationItem[]> = {
     { label: 'Student records', view: 'tpo-students' },
     { label: 'Placements', view: 'tpo-placements' },
     { label: 'Data archive', view: 'tpo-expiry' },
+    { label: 'Security', view: 'tpo-security' },
   ],
   COORDINATOR: [
     { label: 'Assigned drive', view: 'coordinator-dashboard' },
