@@ -152,12 +152,21 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
 
       try {
-        const dbUser = await env.DB.prepare('SELECT is_active, token_version FROM users WHERE id = ?').bind(payload.sub).first<any>();
+        const dbUser = await env.DB.prepare('SELECT is_active, token_version, role, drive_id FROM users WHERE id = ?').bind(payload.sub).first<any>();
         if (dbUser) {
           if (dbUser.is_active === 0) return null;
           const dbVersion = Number(dbUser.token_version || 1);
           const tokenVersion = Number(payload.tokenVersion || 1);
           if (tokenVersion < dbVersion) return null;
+        }
+
+        const checkRole = payload.role || dbUser?.role;
+        const checkDriveId = payload.driveId || dbUser?.drive_id;
+        if ((checkRole === 'HR' || checkRole === 'COORDINATOR') && checkDriveId) {
+          const drive = await env.DB.prepare('SELECT status FROM drives WHERE id = ?').bind(checkDriveId).first<any>();
+          if (drive && (drive.status === 'COMPLETED' || drive.status === 'CANCELLED')) {
+            return null;
+          }
         }
       } catch {}
 
@@ -536,6 +545,27 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       if (!isValid) {
         return jsonResponse({ error: 'Invalid username or password' }, 401);
+      }
+
+      // Check if HR or Coordinator account is associated with a completed or cancelled drive
+      if (user.role === 'COORDINATOR' || user.role === 'HR') {
+        const driveId = user.drive_id;
+        if (driveId) {
+          const drive = await env.DB.prepare('SELECT status, company_name FROM drives WHERE id = ?').bind(driveId).first<any>();
+          if (drive && (drive.status === 'COMPLETED' || drive.status === 'CANCELLED')) {
+            return jsonResponse({
+              error: `This drive has been marked as ${drive.status.toLowerCase()}. Access for HR and Coordinators is currently deactivated.`,
+              code: 'DRIVE_DEACTIVATED',
+              driveStatus: drive.status,
+            }, 403);
+          }
+        }
+        if (user.is_active === 0) {
+          return jsonResponse({
+            error: 'This drive has been marked as completed or cancelled. Access for HR and Coordinators is currently deactivated.',
+            code: 'ACCOUNT_DEACTIVATED',
+          }, 403);
+        }
       }
 
       // Create JWT
@@ -959,6 +989,57 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           driveId
         )
         .run();
+
+      // Ensure recruiter user accounts exist in users table
+      const cred = await env.DB.prepare('SELECT * FROM drive_credentials WHERE drive_id = ?').bind(driveId).first<any>();
+      if (cred) {
+        if (cred.coordinator_username) {
+          await env.DB.prepare(
+            `INSERT OR IGNORE INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+          ).bind(
+            `usr_${cred.coordinator_username}`,
+            cred.coordinator_username,
+            cred.coordinator_password_hash || '',
+            cred.coordinator_salt || '',
+            'COORDINATOR',
+            driveId,
+            companyName,
+            `Coordinator (${companyName})`
+          ).run();
+        }
+        if (cred.hr_username) {
+          await env.DB.prepare(
+            `INSERT OR IGNORE INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+          ).bind(
+            `usr_${cred.hr_username}`,
+            cred.hr_username,
+            cred.hr_password_hash || '',
+            cred.hr_salt || '',
+            'HR',
+            driveId,
+            companyName,
+            `HR (${companyName})`
+          ).run();
+        }
+      }
+
+      // Dynamic credential invalidation and session termination upon drive status changes
+      if (status === 'COMPLETED' || status === 'CANCELLED') {
+        await env.DB.prepare(
+          `UPDATE users
+           SET is_active = 0,
+               token_version = COALESCE(token_version, 1) + 1
+           WHERE drive_id = ? AND role IN ('HR', 'COORDINATOR')`
+        ).bind(driveId).run();
+      } else if (status === 'ONGOING' || status === 'UPCOMING') {
+        await env.DB.prepare(
+          `UPDATE users
+           SET is_active = 1
+           WHERE drive_id = ? AND role IN ('HR', 'COORDINATOR')`
+        ).bind(driveId).run();
+      }
 
       return jsonResponse({
         id: driveId,

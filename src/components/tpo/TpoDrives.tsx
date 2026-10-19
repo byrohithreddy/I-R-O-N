@@ -1130,6 +1130,24 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
                 <option value="COMPLETED">COMPLETED</option>
                 <option value="CANCELLED">CANCELLED</option>
               </select>
+              {(editDriveData.status === 'COMPLETED' || editDriveData.status === 'CANCELLED') && (
+                <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-800 flex items-start gap-1.5">
+                  <ShieldAlert className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                  <span>
+                    Saving as <strong>{editDriveData.status}</strong> will immediately deactivate HR &amp; Coordinator login credentials and invalidate active sessions.
+                  </span>
+                </div>
+              )}
+              {(editDriveData.status === 'ONGOING' || editDriveData.status === 'UPCOMING') &&
+                selectedDrive?.status &&
+                (selectedDrive.status === 'COMPLETED' || selectedDrive.status === 'CANCELLED') && (
+                  <div className="mt-1.5 p-2 bg-emerald-50 border border-emerald-200 rounded text-[11px] text-emerald-800 flex items-start gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                    <span>
+                      Changing status to <strong>{editDriveData.status}</strong> will reactivate HR &amp; Coordinator credentials for login.
+                    </span>
+                  </div>
+                )}
             </div>
           </div>
 

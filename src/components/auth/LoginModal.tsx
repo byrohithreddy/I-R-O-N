@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Modal } from '../common/Modal';
 import { User, Drive } from '../../types';
-import { ShieldCheck, UserCheck, Briefcase, Lock, User as UserIcon, Loader2 } from 'lucide-react';
+import { ShieldCheck, UserCheck, Briefcase, Lock, User as UserIcon, Loader2, AlertTriangle } from 'lucide-react';
 import { api } from '../../services/api';
 
 interface LoginModalProps {
@@ -9,12 +9,16 @@ interface LoginModalProps {
   onClose: () => void;
   onLoginSuccess: (user: User) => void;
   drives?: Drive[];
+  sessionNotice?: string | null;
+  onClearNotice?: () => void;
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({
   isOpen,
   onClose,
   onLoginSuccess,
+  sessionNotice,
+  onClearNotice,
 }) => {
   const [selectedRole, setSelectedRole] = useState<'TPO' | 'COORDINATOR' | 'HR'>('TPO');
   const [username, setUsername] = useState('');
@@ -25,6 +29,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const handleRoleSelect = (role: 'TPO' | 'COORDINATOR' | 'HR') => {
     setSelectedRole(role);
     setError(null);
+    if (onClearNotice) onClearNotice();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -98,9 +103,22 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           </button>
         </div>
 
+        {sessionNotice && (
+          <div className="p-3 text-xs bg-amber-50 border border-amber-200 text-amber-900 rounded flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-amber-950">Session Notice</p>
+              <p className="mt-0.5">{sessionNotice}</p>
+            </div>
+          </div>
+        )}
+
         {error && (
-          <div className="p-3 text-xs bg-rose-50 border border-rose-200 text-rose-800 rounded">
-            {error}
+          <div className="p-3 text-xs bg-rose-50 border border-rose-200 text-rose-800 rounded flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-medium">{error}</p>
+            </div>
           </div>
         )}
 

@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- Index on username for fast login lookup
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_drive_role ON users(drive_id, role);
 
 -- 2. Permanent Student Master Database
 CREATE TABLE IF NOT EXISTS students (

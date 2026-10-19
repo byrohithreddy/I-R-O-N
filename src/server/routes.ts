@@ -50,14 +50,31 @@ export async function authMiddleware(req: AuthenticatedRequest, res: Response, n
 
     if (dbUser) {
       if (dbUser.is_active === 0) {
-        return res.status(401).json({ error: 'Account is deactivated' });
+        return res.status(401).json({
+          error: 'Your session has ended because this drive has been marked as completed or cancelled.',
+          code: 'ACCOUNT_DEACTIVATED',
+        });
       }
       const dbVersion = Number(dbUser.token_version || 1);
       const tokenVersion = Number(payload.tokenVersion || 1);
       if (tokenVersion < dbVersion) {
         return res.status(401).json({
-          error: 'Session invalidated due to password change. Please sign in with your new credentials.',
+          error: 'Your session has ended because this drive has been marked as completed or cancelled. Please sign in again.',
           code: 'SESSION_REVOKED',
+        });
+      }
+    }
+
+    // Direct drive status check for active HR/Coordinator sessions
+    const checkRole = payload.role || dbUser?.role;
+    const checkDriveId = payload.driveId || dbUser?.drive_id;
+    if ((checkRole === 'HR' || checkRole === 'COORDINATOR') && checkDriveId) {
+      const drive = await db.prepare('SELECT status FROM drives WHERE id = ?').bind(checkDriveId).first<any>();
+      if (drive && (drive.status === 'COMPLETED' || drive.status === 'CANCELLED')) {
+        return res.status(401).json({
+          error: `Your session has ended because this drive has been marked as ${drive.status.toLowerCase()}. Access for HR and Coordinators is deactivated.`,
+          code: 'DRIVE_DEACTIVATED',
+          driveStatus: drive.status,
         });
       }
     }
@@ -217,6 +234,27 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
 
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    // Check if HR or Coordinator account is associated with a completed or cancelled drive
+    if (user.role === 'COORDINATOR' || user.role === 'HR') {
+      const driveId = user.drive_id;
+      if (driveId) {
+        const drive = await db.prepare('SELECT status, company_name FROM drives WHERE id = ?').bind(driveId).first<any>();
+        if (drive && (drive.status === 'COMPLETED' || drive.status === 'CANCELLED')) {
+          return res.status(403).json({
+            error: `This drive has been marked as ${drive.status.toLowerCase()}. Access for HR and Coordinators is currently deactivated.`,
+            code: 'DRIVE_DEACTIVATED',
+            driveStatus: drive.status,
+          });
+        }
+      }
+      if (user.is_active === 0) {
+        return res.status(403).json({
+          error: 'This drive has been marked as completed or cancelled. Access for HR and Coordinators is currently deactivated.',
+          code: 'ACCOUNT_DEACTIVATED',
+        });
+      }
     }
 
     const userTokenVersion = Number(user.token_version || 1);
@@ -1324,7 +1362,7 @@ apiRouter.put('/drives/:id', authMiddleware, roleMiddleware(['TPO']), async (req
       )
       .run();
 
-    // Ensure recruiter credentials exist
+    // Ensure recruiter credentials and user accounts exist
     const cred = await db.prepare('SELECT * FROM drive_credentials WHERE drive_id = ?').bind(driveId).first<any>();
     const defaultCreds = generateRecruiterCredentials(companyName || 'drive', driveId);
     const coordUser = cred?.coordinator_username || defaultCreds.coordinatorUsername;
@@ -1361,6 +1399,66 @@ apiRouter.put('/drives/:id', authMiddleware, roleMiddleware(['TPO']), async (req
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
         )
         .bind(`usr_${hrUser}`, hrUser, hrHash, hrSalt, 'HR', driveId, companyName, `HR (${companyName})`)
+        .run();
+    } else {
+      // Ensure existing credentials also have corresponding user records in users table
+      if (coordUser) {
+        await db
+          .prepare(
+            `INSERT OR IGNORE INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+          )
+          .bind(
+            `usr_${coordUser}`,
+            coordUser,
+            cred.coordinator_password_hash || '',
+            cred.coordinator_salt || '',
+            'COORDINATOR',
+            driveId,
+            companyName,
+            `Coordinator (${companyName})`
+          )
+          .run();
+      }
+      if (hrUser) {
+        await db
+          .prepare(
+            `INSERT OR IGNORE INTO users (id, username, password_hash, salt, role, drive_id, company_name, full_name, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+          )
+          .bind(
+            `usr_${hrUser}`,
+            hrUser,
+            cred.hr_password_hash || '',
+            cred.hr_salt || '',
+            'HR',
+            driveId,
+            companyName,
+            `HR (${companyName})`
+          )
+          .run();
+      }
+    }
+
+    // Dynamic credential invalidation and session termination upon drive status changes
+    if (status === 'COMPLETED' || status === 'CANCELLED') {
+      await db
+        .prepare(
+          `UPDATE users
+           SET is_active = 0,
+               token_version = COALESCE(token_version, 1) + 1
+           WHERE drive_id = ? AND role IN ('HR', 'COORDINATOR')`
+        )
+        .bind(driveId)
+        .run();
+    } else if (status === 'ONGOING' || status === 'UPCOMING') {
+      await db
+        .prepare(
+          `UPDATE users
+           SET is_active = 1
+           WHERE drive_id = ? AND role IN ('HR', 'COORDINATOR')`
+        )
+        .bind(driveId)
         .run();
     }
 

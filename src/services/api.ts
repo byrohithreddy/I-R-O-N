@@ -34,6 +34,24 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retries =
 
     const data = await response.json();
     if (!response.ok) {
+      if (
+        (response.status === 401 || response.status === 403) &&
+        (data.code === 'ACCOUNT_DEACTIVATED' ||
+          data.code === 'SESSION_REVOKED' ||
+          data.code === 'DRIVE_DEACTIVATED' ||
+          data.error?.toLowerCase().includes('session has ended') ||
+          data.error?.toLowerCase().includes('completed or cancelled') ||
+          data.error?.toLowerCase().includes('deactivated'))
+      ) {
+        // Clear active session immediately
+        sessionStorage.removeItem('iron_auth_token');
+        sessionStorage.removeItem('iron_active_user');
+        window.dispatchEvent(
+          new CustomEvent('iron:session-expired', {
+            detail: { message: data.error || 'Your session has ended because this drive has been marked as completed or cancelled.' },
+          })
+        );
+      }
       throw new Error(data.error || 'Server error occurred');
     }
 

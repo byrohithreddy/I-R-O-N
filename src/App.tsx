@@ -45,6 +45,7 @@ export default function App() {
 
   const [selectedAnalyticsDriveId, setSelectedAnalyticsDriveId] = useState<string | undefined>();
   const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
 
   const handleRefresh = () => {
@@ -76,10 +77,21 @@ export default function App() {
       setRefreshTick((prev) => prev + 1);
     });
 
+    // Listen for session revocation / deactivated drive session termination events
+    const handleSessionExpired = (e: any) => {
+      const msg = e.detail?.message || 'Your session has ended because this drive has been marked as completed or cancelled.';
+      setSessionNotice(msg);
+      setCurrentUser(null);
+      setCurrentView('public-drives');
+      setIsLoginOpen(true);
+    };
+    window.addEventListener('iron:session-expired', handleSessionExpired);
+
     return () => {
       clearInterval(syncInterval);
       window.removeEventListener('focus', handleFocusOrVisible);
       document.removeEventListener('visibilitychange', handleFocusOrVisible);
+      window.removeEventListener('iron:session-expired', handleSessionExpired);
       unsubscribe();
     };
   }, []);
@@ -229,9 +241,14 @@ export default function App() {
       {/* Staff Login Modal */}
       <LoginModal
         isOpen={isLoginOpen}
-        onClose={() => setIsLoginOpen(false)}
+        onClose={() => {
+          setIsLoginOpen(false);
+          setSessionNotice(null);
+        }}
         onLoginSuccess={handleLoginSuccess}
         drives={drives}
+        sessionNotice={sessionNotice}
+        onClearNotice={() => setSessionNotice(null)}
       />
     </div>
   );
