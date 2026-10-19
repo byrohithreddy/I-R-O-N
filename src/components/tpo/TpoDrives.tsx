@@ -1130,26 +1130,39 @@ export const TpoDrives: React.FC<TpoDrivesProps> = ({
                 <option value="COMPLETED">COMPLETED</option>
                 <option value="CANCELLED">CANCELLED</option>
               </select>
-              {(editDriveData.status === 'COMPLETED' || editDriveData.status === 'CANCELLED') && (
-                <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-800 flex items-start gap-1.5">
-                  <ShieldAlert className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                  <span>
-                    Saving as <strong>{editDriveData.status}</strong> will immediately deactivate HR &amp; Coordinator login credentials and invalidate active sessions.
-                  </span>
-                </div>
-              )}
-              {(editDriveData.status === 'ONGOING' || editDriveData.status === 'UPCOMING') &&
-                selectedDrive?.status &&
-                (selectedDrive.status === 'COMPLETED' || selectedDrive.status === 'CANCELLED') && (
-                  <div className="mt-1.5 p-2 bg-emerald-50 border border-emerald-200 rounded text-[11px] text-emerald-800 flex items-start gap-1.5">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                    <span>
-                      Changing status to <strong>{editDriveData.status}</strong> will reactivate HR &amp; Coordinator credentials for login.
-                    </span>
-                  </div>
-                )}
             </div>
           </div>
+
+          {/* Full-width status change warning banner spanning from left to right corner */}
+          {(editDriveData.status === 'COMPLETED' || editDriveData.status === 'CANCELLED') && (
+            <div className="w-full px-3.5 py-2.5 bg-amber-50 border border-amber-200/90 rounded-lg text-xs text-amber-900 flex items-center gap-2.5 shadow-xs">
+              <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
+              <div className="flex-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 text-[11px] leading-relaxed">
+                <span>
+                  Marking drive as <strong>{editDriveData.status}</strong> will immediately deactivate HR and Coordinator login credentials and terminate active sessions.
+                </span>
+                <span className="self-start sm:self-auto inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono uppercase font-semibold bg-amber-200/80 text-amber-900 shrink-0">
+                  Access Revoked
+                </span>
+              </div>
+            </div>
+          )}
+
+          {(editDriveData.status === 'ONGOING' || editDriveData.status === 'UPCOMING') &&
+            selectedDrive?.status &&
+            (selectedDrive.status === 'COMPLETED' || selectedDrive.status === 'CANCELLED') && (
+              <div className="w-full px-3.5 py-2.5 bg-emerald-50 border border-emerald-200/90 rounded-lg text-xs text-emerald-900 flex items-center gap-2.5 shadow-xs">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <div className="flex-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 text-[11px] leading-relaxed">
+                  <span>
+                    Changing status back to <strong>{editDriveData.status}</strong> will restore and reactivate HR and Coordinator login access.
+                  </span>
+                  <span className="self-start sm:self-auto inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono uppercase font-semibold bg-emerald-200/80 text-emerald-900 shrink-0">
+                    Access Restored
+                  </span>
+                </div>
+              </div>
+            )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
