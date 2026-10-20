@@ -8,5 +8,5 @@ coverage/
 !.env.example
 .data/
 .wrangler/
-.codegraph/
+graphify-out/
 .aistudio/

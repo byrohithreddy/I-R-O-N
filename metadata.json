@@ -3,6 +3,6 @@
   "description": "Enterprise-grade campus recruitment management platform orchestrating end-to-end placement drives, candidate pools, batches, and evaluations.",
   "permissions": [],
   "capabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+    "MAJOR_CAPABILITY_SERVER_SIDE"
   ]
 }
